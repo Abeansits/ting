@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ting.dev/schemas/dashboard-state.schema.json",
+  "title": "DashboardState",
+  "description": "Compacted snapshot written to dashboard-state.json. A consumer loads this to render an initial frame, then resumes from the JSONL event log at latest_seq + 1.",
+  "type": "object",
+  "required": [
+    "version",
+    "forum_id",
+    "topic",
+    "participants",
+    "max_rounds",
+    "created",
+    "updated",
+    "latest_seq",
+    "status",
+    "rounds"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Snapshot schema version. v0.4 Phase 1A ships version=1."
+    },
+    "forum_id": { "type": "string", "minLength": 1 },
+    "topic": { "type": "string" },
+    "participants": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "max_rounds": { "type": "integer", "minimum": 1 },
+    "created": { "type": "string", "format": "date-time" },
+    "updated": { "type": "string", "format": "date-time" },
+    "latest_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Highest event seq already folded into this snapshot. 0 means no events applied yet."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "in_progress", "completed"]
+    },
+    "rounds": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/RoundSummary" }
+    },
+    "classifier_metrics": {
+      "description": "Classifier-picked metrics (includes the mandatory dissent axis when emitted).",
+      "type": ["object", "null"]
+    },
+    "convergence_score": {
+      "type": ["number", "null"],
+      "description": "Most recent convergence score across rounds."
+    }
+  },
+  "$defs": {
+    "RoundSummary": {
+      "type": "object",
+      "required": ["round", "stage", "participants_responded"],
+      "additionalProperties": false,
+      "properties": {
+        "round": { "type": "integer", "minimum": 1 },
+        "stage": { "type": "string" },
+        "participants_responded": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "synthesis": { "type": ["object", "null"] },
+        "metric_scores": { "type": ["object", "null"] },
+        "convergence_score": { "type": ["number", "null"] }
+      }
+    }
+  }
+}

@@ -1,6 +1,8 @@
 mod config;
 mod convergence;
+mod dashboard_state;
 mod eval;
+mod events;
 mod protocol;
 mod report;
 mod substrate;
