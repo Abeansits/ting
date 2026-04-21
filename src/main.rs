@@ -74,6 +74,26 @@ enum Commands {
         /// --dashboard). Binds 127.0.0.1 only. Default 3420.
         #[arg(long, default_value_t = 3420)]
         port: u16,
+
+        /// Suppress the auto-open of the dashboard URL in a browser
+        /// (only meaningful with --dashboard).
+        #[arg(long)]
+        no_open: bool,
+    },
+
+    /// Serve the live dashboard for a forum directory without running the
+    /// forum itself. Works for in-progress and completed forums.
+    Serve {
+        /// Forum ID
+        forum_id: String,
+
+        /// Port for the dashboard HTTP server. Binds 127.0.0.1 only.
+        #[arg(long, default_value_t = 3420)]
+        port: u16,
+
+        /// Suppress the auto-open of the dashboard URL in a browser.
+        #[arg(long)]
+        no_open: bool,
     },
 
     /// Check the status of a forum
@@ -199,6 +219,7 @@ fn main() -> Result<()> {
             no_classifier,
             no_metric_scoring,
             port,
+            no_open,
         } => cmd_new(
             &topic,
             &participant,
@@ -210,7 +231,13 @@ fn main() -> Result<()> {
             no_classifier,
             no_metric_scoring,
             port,
+            no_open,
         ),
+        Commands::Serve {
+            forum_id,
+            port,
+            no_open,
+        } => cmd_serve(&forum_id, port, no_open),
         Commands::Status { forum_id, round } => cmd_status(&forum_id, round),
         Commands::List => cmd_list(),
         Commands::Result {
@@ -265,6 +292,7 @@ fn cmd_new(
     no_classifier: bool,
     no_metric_scoring: bool,
     port: u16,
+    no_open: bool,
 ) -> Result<()> {
     // Validate timeout format early
     config::parse_duration(timeout)?;
@@ -370,7 +398,7 @@ fn cmd_new(
     };
 
     if dashboard {
-        run_with_dashboard(forum_config, forum_path, run_opts, port)
+        run_with_dashboard(forum_config, forum_path, run_opts, port, no_open)
     } else {
         protocol::run_forum(&forum_config, &forum_path, &run_opts)
     }
@@ -388,6 +416,7 @@ fn run_with_dashboard(
     forum_path: PathBuf,
     run_opts: protocol::RunOptions,
     port: u16,
+    no_open: bool,
 ) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -401,7 +430,11 @@ fn run_with_dashboard(
         let bound = listener
             .local_addr()
             .context("Failed to read bound address")?;
-        eprintln!("  Dashboard  http://{bound}");
+        let url = format!("http://{bound}");
+        eprintln!("  Dashboard  {url}");
+        if !no_open {
+            try_open_browser(&url);
+        }
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -434,6 +467,72 @@ fn run_with_dashboard(
             }
         }
     })
+}
+
+/// Serve the dashboard for an existing forum without running it. Used to
+/// inspect completed forums or attach to an already-running one. Ctrl+C
+/// triggers a graceful shutdown so in-flight SSE clients get a clean close.
+fn cmd_serve(forum_id: &str, port: u16, no_open: bool) -> Result<()> {
+    let forum_path = substrate::forum_dir(forum_id);
+    if !forum_path.exists() {
+        anyhow::bail!("Forum not found: {}", forum_id);
+    }
+
+    let completed = substrate::is_completed(&forum_path);
+    let status = if completed {
+        "completed"
+    } else {
+        "in progress"
+    };
+    eprintln!();
+    eprintln!("  Forum   {}", forum_id);
+    eprintln!("  Status  {}", status);
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build tokio runtime")?;
+
+    rt.block_on(async move {
+        let listener = server::bind_loopback(port).await?;
+        let bound = listener
+            .local_addr()
+            .context("Failed to read bound address")?;
+        let url = format!("http://{bound}");
+        eprintln!("  Dashboard  {url}");
+        eprintln!("  Press Ctrl+C to stop");
+        if !no_open {
+            try_open_browser(&url);
+        }
+
+        server::serve(listener, forum_path, async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await
+    })
+}
+
+/// Fire-and-forget: spawn the platform's "open this URL" helper. Failure is
+/// silent — the URL was already printed, so the user can click or copy.
+fn try_open_browser(url: &str) {
+    let cmd = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        // `start` is a shell built-in, not an exe. Route through cmd.
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        return;
+    } else {
+        "xdg-open"
+    };
+    let _ = std::process::Command::new(cmd)
+        .arg(url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 fn cmd_status(forum_id: &str, round: Option<u32>) -> Result<()> {
