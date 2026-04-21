@@ -426,7 +426,7 @@ fn run_with_dashboard(
     let server_path = forum_path.clone();
 
     rt.block_on(async move {
-        let (listener, _url) = start_dashboard(port, no_open).await?;
+        let listener = start_dashboard(port, no_open).await?;
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -485,11 +485,23 @@ fn cmd_serve(forum_id: &str, port: u16, no_open: bool) -> Result<()> {
         .context("Failed to build tokio runtime")?;
 
     rt.block_on(async move {
-        let (listener, _url) = start_dashboard(port, no_open).await?;
+        let listener = start_dashboard(port, no_open).await?;
         eprintln!("  Press Ctrl+C to stop");
 
+        // Graceful shutdown on first Ctrl+C; on second Ctrl+C or a 5s stall
+        // (long-lived SSE clients that hold axum's graceful-shutdown open)
+        // force exit. Tokio doesn't restore the default SIGINT handler after
+        // the first install, so the fallback is the correctness guarantee.
         server::serve(listener, forum_path, async {
             let _ = tokio::signal::ctrl_c().await;
+            eprintln!("\n  Shutting down — Ctrl+C again to force.");
+            tokio::spawn(async {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+                }
+                std::process::exit(130);
+            });
         })
         .await
     })
@@ -498,17 +510,17 @@ fn cmd_serve(forum_id: &str, port: u16, no_open: bool) -> Result<()> {
 /// Bind the dashboard listener on a loopback port, print the URL, and
 /// optionally launch the browser. Split from `server::serve` so callers stay
 /// in charge of the shutdown future.
-async fn start_dashboard(port: u16, no_open: bool) -> Result<(tokio::net::TcpListener, String)> {
+async fn start_dashboard(port: u16, no_open: bool) -> Result<tokio::net::TcpListener> {
     let listener = server::bind_loopback(port).await?;
     let bound = listener
         .local_addr()
         .context("Failed to read bound address")?;
     let url = format!("http://{bound}");
     eprintln!("  Dashboard  {url}");
-    if !no_open {
+    if !no_open && std::io::IsTerminal::is_terminal(&std::io::stderr()) {
         try_open_browser(&url);
     }
-    Ok((listener, url))
+    Ok(listener)
 }
 
 /// Spawn the platform's "open this URL" helper. Failure is silent — the URL
