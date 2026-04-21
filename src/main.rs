@@ -426,15 +426,7 @@ fn run_with_dashboard(
     let server_path = forum_path.clone();
 
     rt.block_on(async move {
-        let listener = server::bind_loopback(port).await?;
-        let bound = listener
-            .local_addr()
-            .context("Failed to read bound address")?;
-        let url = format!("http://{bound}");
-        eprintln!("  Dashboard  {url}");
-        if !no_open {
-            try_open_browser(&url);
-        }
+        let (listener, _url) = start_dashboard(port, no_open).await?;
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -478,8 +470,7 @@ fn cmd_serve(forum_id: &str, port: u16, no_open: bool) -> Result<()> {
         anyhow::bail!("Forum not found: {}", forum_id);
     }
 
-    let completed = substrate::is_completed(&forum_path);
-    let status = if completed {
+    let status = if substrate::is_completed(&forum_path) {
         "completed"
     } else {
         "in progress"
@@ -494,16 +485,8 @@ fn cmd_serve(forum_id: &str, port: u16, no_open: bool) -> Result<()> {
         .context("Failed to build tokio runtime")?;
 
     rt.block_on(async move {
-        let listener = server::bind_loopback(port).await?;
-        let bound = listener
-            .local_addr()
-            .context("Failed to read bound address")?;
-        let url = format!("http://{bound}");
-        eprintln!("  Dashboard  {url}");
+        let (listener, _url) = start_dashboard(port, no_open).await?;
         eprintln!("  Press Ctrl+C to stop");
-        if !no_open {
-            try_open_browser(&url);
-        }
 
         server::serve(listener, forum_path, async {
             let _ = tokio::signal::ctrl_c().await;
@@ -512,27 +495,49 @@ fn cmd_serve(forum_id: &str, port: u16, no_open: bool) -> Result<()> {
     })
 }
 
-/// Fire-and-forget: spawn the platform's "open this URL" helper. Failure is
-/// silent — the URL was already printed, so the user can click or copy.
+/// Bind the dashboard listener on a loopback port, print the URL, and
+/// optionally launch the browser. Split from `server::serve` so callers stay
+/// in charge of the shutdown future.
+async fn start_dashboard(port: u16, no_open: bool) -> Result<(tokio::net::TcpListener, String)> {
+    let listener = server::bind_loopback(port).await?;
+    let bound = listener
+        .local_addr()
+        .context("Failed to read bound address")?;
+    let url = format!("http://{bound}");
+    eprintln!("  Dashboard  {url}");
+    if !no_open {
+        try_open_browser(&url);
+    }
+    Ok((listener, url))
+}
+
+/// Spawn the platform's "open this URL" helper. Failure is silent — the URL
+/// was already printed, so the user can click or copy. The child is reaped in
+/// a detached thread to avoid leaving a zombie for the server's lifetime.
 fn try_open_browser(url: &str) {
-    let cmd = if cfg!(target_os = "macos") {
-        "open"
+    let mut cmd = if cfg!(target_os = "macos") {
+        let mut c = std::process::Command::new("open");
+        c.arg(url);
+        c
     } else if cfg!(target_os = "windows") {
         // `start` is a shell built-in, not an exe. Route through cmd.
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", "", url])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
-        return;
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", "", url]);
+        c
     } else {
-        "xdg-open"
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(url);
+        c
     };
-    let _ = std::process::Command::new(cmd)
-        .arg(url)
+    if let Ok(mut child) = cmd
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn();
+        .spawn()
+    {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
 }
 
 fn cmd_status(forum_id: &str, round: Option<u32>) -> Result<()> {
