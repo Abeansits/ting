@@ -6,9 +6,9 @@ use async_stream::stream;
 use axum::{
     Router,
     extract::State,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{
-        Html, Json,
+        Html, IntoResponse, Json,
         sse::{Event as SseEvent, Sse},
     },
     routing::get,
@@ -32,6 +32,8 @@ use crate::dashboard_state;
 use crate::events::{DashboardEvent, EVENT_LOG_FILENAME, EventType, event_log_path};
 
 const DASHBOARD_HTML: &str = include_str!("static/dashboard.html");
+const DASHBOARD_CSS: &str = include_str!("static/dashboard.css");
+const DASHBOARD_JS: &str = include_str!("static/dashboard.js");
 
 /// Room for a burst of events between the tailer and the slowest subscriber.
 /// 1024 covers a full forum's worth of events with plenty of headroom.
@@ -53,6 +55,8 @@ pub(crate) fn router(forum_dir: PathBuf) -> Router {
     spawn_tailer(forum_dir.clone(), events_tx.clone());
     Router::new()
         .route("/", get(serve_dashboard))
+        .route("/static/dashboard.css", get(serve_css))
+        .route("/static/dashboard.js", get(serve_js))
         .route("/api/state", get(serve_state))
         .route("/api/events", get(serve_events))
         .with_state(AppState {
@@ -63,6 +67,26 @@ pub(crate) fn router(forum_dir: PathBuf) -> Router {
 
 async fn serve_dashboard() -> Html<&'static str> {
     Html(DASHBOARD_HTML)
+}
+
+async fn serve_css() -> impl IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/css; charset=utf-8"),
+        )],
+        DASHBOARD_CSS,
+    )
+}
+
+async fn serve_js() -> impl IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/javascript; charset=utf-8"),
+        )],
+        DASHBOARD_JS,
+    )
 }
 
 async fn serve_state(State(app): State<AppState>) -> ApiResult<Json<Value>> {
@@ -392,6 +416,80 @@ mod tests {
         let body = String::from_utf8(body_bytes(resp).await).unwrap();
         assert!(body.contains("Ting Dashboard"));
         assert!(body.contains("/api/state"));
+        // Phase 2C contract: every dashboard section the JS renders into.
+        for id in [
+            "forum-id",
+            "topic",
+            "rounds-grid",
+            "metrics",
+            "gauge-fill",
+            "synthesis-info",
+            "connection",
+        ] {
+            assert!(body.contains(id), "missing section id `{id}` in HTML shell");
+        }
+        assert!(body.contains("/static/dashboard.css"));
+        assert!(body.contains("/static/dashboard.js"));
+    }
+
+    #[tokio::test]
+    async fn static_css_served_with_css_content_type() {
+        let dir = tmp_dir("css");
+        let resp = router(dir)
+            .oneshot(
+                Request::get("/static/dashboard.css")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(ct.starts_with("text/css"), "content-type was {ct}");
+        let body = String::from_utf8(body_bytes(resp).await).unwrap();
+        assert!(body.contains("--bg"), "expected CSS vars in body");
+    }
+
+    #[tokio::test]
+    async fn static_js_served_with_js_content_type() {
+        let dir = tmp_dir("js");
+        let resp = router(dir)
+            .oneshot(
+                Request::get("/static/dashboard.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            ct.starts_with("text/javascript") || ct.starts_with("application/javascript"),
+            "content-type was {ct}"
+        );
+        let body = String::from_utf8(body_bytes(resp).await).unwrap();
+        // Contract: JS handles every event type the server may broadcast.
+        for needle in [
+            "EventSource",
+            "forum_started",
+            "round_started",
+            "participant_response",
+            "synthesis",
+            "classifier_metrics",
+            "metric_scores",
+            "convergence",
+            "forum_complete",
+        ] {
+            assert!(body.contains(needle), "JS missing handler for `{needle}`");
+        }
     }
 
     #[tokio::test]
