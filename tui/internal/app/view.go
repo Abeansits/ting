@@ -1,9 +1,7 @@
 package app
 
 import (
-	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -12,17 +10,18 @@ import (
 	"github.com/Abeansits/ting/tui/internal/model"
 )
 
-// Dissent Axis is the classifier metric the plan marks mandatory. We render
-// it with inverted color to honor that status in the TUI the same way the
-// HTML dashboard does.
+// dissentAxisID is the metric id the classifier contract marks mandatory.
+// The HTML dashboard renders it prominently; the TUI matches with reverse-
+// video so the "always shown" invariant is visible at a glance.
 const dissentAxisID = "dissent_axis"
+
+const emDash = "—"
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
-// Box-drawing blocks for bars. Eighths give smooth fractional widths.
+// bar8 gives eighth-cell fractional fills so progress bars move smoothly.
 var bar8 = []string{" ", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"}
 
-// Sparkline glyphs at eight levels.
 var spark = []rune("▁▂▃▄▅▆▇█")
 
 var (
@@ -33,24 +32,30 @@ var (
 	styleHeading     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("117"))
 	styleBarFill     = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
 	styleBarTrack    = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
-	styleOK          = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
 	styleSpinner     = lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
 	stylePending     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	styleError       = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	styleStatus      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("215"))
+	styleAccent      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("215"))
 	styleStatusDone  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("114"))
 	styleDissent     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("219")).Reverse(true)
-	styleFocusMark   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("215"))
 	styleHelpOverlay = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color("244")).
 				Padding(1, 2)
 )
 
+// Column widths for the rounds table. Header and body render from the same
+// spec so padding changes in one place.
+const (
+	colStage     = 10
+	colResponded = 10
+)
+
 func (m *Model) View() string {
 	if m.showHelp {
 		return m.renderHelp()
 	}
+	m.cache.refresh(m.state)
 
 	var b strings.Builder
 	b.WriteString(m.renderHeader())
@@ -81,53 +86,49 @@ func (m *Model) View() string {
 
 func (m *Model) renderHeader() string {
 	s := m.state
-	forum := dashIfEmpty(s.ForumID)
-	status := statusBadge(s.Status)
-	round := fmt.Sprintf("Round %d/%d", currentRound(s), s.MaxRounds)
-	elapsed := fmt.Sprintf("elapsed %s", formatElapsed(s, m.now))
-	seq := fmt.Sprintf("seq %d", s.LatestSeq)
-
 	line1 := fmt.Sprintf("%s  %s  %s  %s",
 		styleTitle.Render("TING"),
 		styleLabel.Render("·"),
-		styleValue.Render(forum),
-		status,
+		styleValue.Render(dashIfEmpty(s.ForumID)),
+		statusBadge(s.Status),
 	)
-	line2 := styleDim.Render(strings.Join([]string{round, elapsed, seq}, "  ·  "))
-	return line1 + "\n" + line2
+	meta := []string{
+		fmt.Sprintf("Round %d/%d", m.cache.currentRoundNumber(), s.MaxRounds),
+		fmt.Sprintf("elapsed %s", formatElapsed(s, m.now)),
+		fmt.Sprintf("seq %d", s.LatestSeq),
+	}
+	return line1 + "\n" + styleDim.Render(strings.Join(meta, "  ·  "))
 }
 
 func (m *Model) renderTopic() string {
 	s := m.state
 	topic := styleHeading.Render("▸ " + dashIfEmpty(s.Topic))
-
 	if len(s.Participants) == 0 {
 		return topic
 	}
-	parts := make([]string, 0, len(s.Participants))
+	chips := make([]string, 0, len(s.Participants))
 	for _, name := range s.Participants {
-		parts = append(parts, m.participantChip(name))
+		chips = append(chips, m.participantChip(name))
 	}
-	return topic + "\n  " + strings.Join(parts, "   ")
+	return topic + "\n  " + strings.Join(chips, "   ")
 }
 
-// participantChip renders one participant with their current-round status
-// glyph. A spinner frame is chosen from m.tick so active participants animate.
 func (m *Model) participantChip(name string) string {
-	status, active := m.participantStatus(name)
-	var glyph string
+	status := m.participantStatus(name)
+	var glyph, label string
 	switch status {
 	case pStatusDone:
-		glyph = styleOK.Render("✓")
+		glyph = styleBarFill.Render("✓")
+		label = styleValue.Render(name)
 	case pStatusActive:
-		glyph = styleSpinner.Render(spinnerFrames[int(m.tick)%len(spinnerFrames)])
+		frame := spinnerFrames[m.spinnerIndex()]
+		glyph = styleSpinner.Render(frame)
+		label = styleValue.Render(name)
 	default:
 		glyph = stylePending.Render("·")
+		label = styleLabel.Render(name)
 	}
-	if active {
-		return fmt.Sprintf("%s %s", glyph, styleValue.Render(name))
-	}
-	return fmt.Sprintf("%s %s", glyph, styleLabel.Render(name))
+	return glyph + " " + label
 }
 
 type participantStatus int
@@ -138,70 +139,69 @@ const (
 	pStatusDone
 )
 
-// participantStatus reports how one participant stands in the current round:
-// done (responded), active (round in progress and not yet responded), or
-// pending (no active round).
-func (m *Model) participantStatus(name string) (participantStatus, bool) {
-	round := activeRound(m.state)
+func (m *Model) participantStatus(name string) participantStatus {
+	round := m.cache.activeRound()
 	if round == nil {
-		return pStatusPending, false
+		return pStatusPending
 	}
 	for _, r := range round.ParticipantsResponded {
 		if r == name {
-			return pStatusDone, true
+			return pStatusDone
 		}
 	}
 	if m.state.Status == model.StatusInProgress {
-		return pStatusActive, true
+		return pStatusActive
 	}
-	return pStatusPending, false
+	return pStatusPending
 }
 
 func (m *Model) renderRounds() string {
 	var b strings.Builder
 	b.WriteString(styleHeading.Render("ROUNDS"))
 	b.WriteString("\n")
-	if len(m.state.Rounds) == 0 {
+
+	rounds := m.cache.sortedRounds
+	if len(rounds) == 0 {
 		b.WriteString(styleDim.Render("  (rounds appear as the forum runs)"))
 		return b.String()
 	}
-	b.WriteString(styleLabel.Render("   #  STAGE      RESPONDED  CONVERGENCE"))
-	b.WriteString("\n")
 
-	sorted := make([]model.RoundSummary, len(m.state.Rounds))
-	copy(sorted, m.state.Rounds)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Round < sorted[j].Round })
+	header := fmt.Sprintf("   #  %s%s%s",
+		padRight("STAGE", colStage),
+		padRight("RESPONDED", colResponded),
+		"CONVERGENCE",
+	)
+	b.WriteString(styleLabel.Render(header))
+	b.WriteString("\n")
 
 	focus := m.resolvedFocus()
 	total := len(m.state.Participants)
-	for _, r := range sorted {
+	for _, r := range rounds {
 		marker := "  "
 		if int(r.Round) == focus {
-			marker = styleFocusMark.Render("▸ ")
+			marker = styleAccent.Render("▸ ")
 		}
-		stage := padRight(r.Stage, 9)
 		responded := fmt.Sprintf("%d/%d", len(r.ParticipantsResponded), total)
-		conv := "—"
+		conv := emDash
 		if r.ConvergenceScore != nil {
 			conv = fmt.Sprintf("%4.1f / 10", *r.ConvergenceScore)
 		}
-		fmt.Fprintf(&b, "%s%s  %s  %s  %s\n",
+		fmt.Fprintf(&b, "%s%s  %s%s%s\n",
 			marker,
 			styleValue.Render(fmt.Sprintf("%d", r.Round)),
-			styleValue.Render(stage),
-			styleValue.Render(padRight(responded, 9)),
+			styleValue.Render(padRight(r.Stage, colStage)),
+			styleValue.Render(padRight(responded, colResponded)),
 			styleValue.Render(conv),
 		)
 	}
 
-	if active := activeRound(m.state); active != nil && total > 0 {
+	if active := m.cache.activeRound(); active != nil && total > 0 {
 		b.WriteString("  ")
 		b.WriteString(styleLabel.Render("round progress "))
 		b.WriteString(renderBar(float64(len(active.ParticipantsResponded)), float64(total), 20))
 		b.WriteString(styleDim.Render(fmt.Sprintf(" %d/%d", len(active.ParticipantsResponded), total)))
 		b.WriteString("\n")
 	}
-
 	return b.String()
 }
 
@@ -212,21 +212,20 @@ func (m *Model) renderMetrics() string {
 	b.WriteString(styleDim.Render("(Dissent Axis always shown)"))
 	b.WriteString("\n")
 
-	metrics := decodeClassifier(m.state.ClassifierMetrics)
-	if len(metrics) == 0 {
+	if len(m.cache.classifier) == 0 {
 		b.WriteString(styleDim.Render("  (axes appear after the pre-round classifier runs)"))
 		return b.String()
 	}
 
 	nameWidth := 0
-	for _, mt := range metrics {
+	for _, mt := range m.cache.classifier {
 		if len(mt.Name) > nameWidth {
 			nameWidth = len(mt.Name)
 		}
 	}
 
-	for _, mt := range metrics {
-		history := metricHistory(m.state.Rounds, mt.ID)
+	for _, mt := range m.cache.classifier {
+		history := m.cache.metricHistory[mt.ID]
 		scale := mt.Scale
 		if scale <= 0 {
 			scale = 10
@@ -234,22 +233,20 @@ func (m *Model) renderMetrics() string {
 
 		name := padRight(mt.Name, nameWidth)
 		if mt.ID == dissentAxisID || mt.Mandatory {
-			name = styleDissent.Render(padRight(mt.Name, nameWidth))
+			name = styleDissent.Render(name)
 		} else {
 			name = styleValue.Render(name)
 		}
 
-		var latest string
-		var bar string
+		var bar, latest string
 		if len(history) == 0 {
 			bar = styleBarTrack.Render(strings.Repeat("░", 12))
-			latest = styleDim.Render("—")
+			latest = styleDim.Render(emDash)
 		} else {
 			last := history[len(history)-1]
 			bar = renderBar(last, float64(scale), 12)
 			latest = styleValue.Render(fmt.Sprintf("%4.1f / %d", last, scale))
 		}
-
 		sparkline := renderSparkline(history, float64(scale), m.state.MaxRounds)
 
 		fmt.Fprintf(&b, "  %s  %s  %s  %s\n", name, bar, sparkline, latest)
@@ -261,26 +258,26 @@ func (m *Model) renderConvergence() string {
 	var b strings.Builder
 	b.WriteString(styleHeading.Render("CONVERGENCE"))
 	b.WriteString("\n")
-	history := convergenceHistory(m.state.Rounds)
+
 	latest := m.state.ConvergenceScore
-	if latest == nil && len(history) > 0 {
-		v := history[len(history)-1]
+	if latest == nil && len(m.cache.convergence) > 0 {
+		v := m.cache.convergence[len(m.cache.convergence)-1]
 		latest = &v
 	}
 	if latest == nil {
 		b.WriteString(styleDim.Render("  (awaiting first judge score)"))
 		return b.String()
 	}
-	bar := renderBar(*latest, 10, 24)
+
 	b.WriteString("  ")
 	b.WriteString(styleLabel.Render("latest "))
-	b.WriteString(bar)
+	b.WriteString(renderBar(*latest, 10, 24))
 	b.WriteString("  ")
 	b.WriteString(styleValue.Render(fmt.Sprintf("%4.1f / 10", *latest)))
 	b.WriteString("\n")
-	if len(history) > 1 {
-		parts := make([]string, 0, len(history))
-		for _, h := range history {
+	if len(m.cache.convergence) > 1 {
+		parts := make([]string, 0, len(m.cache.convergence))
+		for _, h := range m.cache.convergence {
 			parts = append(parts, fmt.Sprintf("%.1f", h))
 		}
 		b.WriteString("  ")
@@ -296,40 +293,20 @@ func (m *Model) renderSynthesis() string {
 	b.WriteString(styleHeading.Render("SYNTHESIS"))
 	b.WriteString("\n")
 
-	type synthEntry struct {
-		round uint32
-		words int
-	}
-	synths := make([]synthEntry, 0, len(m.state.Rounds))
-	for _, r := range m.state.Rounds {
-		if len(r.Synthesis) == 0 {
-			continue
-		}
-		var p struct {
-			Round     uint32 `json:"round"`
-			WordCount int    `json:"word_count"`
-		}
-		if err := json.Unmarshal(r.Synthesis, &p); err != nil {
-			continue
-		}
-		synths = append(synths, synthEntry{round: p.Round, words: p.WordCount})
-	}
-	if len(synths) == 0 {
+	if len(m.cache.synthesis) == 0 {
 		b.WriteString(styleDim.Render("  (no synthesis yet)"))
 		return b.String()
 	}
-	sort.Slice(synths, func(i, j int) bool { return synths[i].round < synths[j].round })
-
 	focus := m.resolvedFocus()
-	for _, s := range synths {
+	for _, s := range m.cache.synthesis {
 		marker := "  "
-		if int(s.round) == focus {
-			marker = styleFocusMark.Render("▸ ")
+		if int(s.Round) == focus {
+			marker = styleAccent.Render("▸ ")
 		}
 		fmt.Fprintf(&b, "%sround %d  %s\n",
 			marker,
-			s.round,
-			styleDim.Render(fmt.Sprintf("%d words", s.words)),
+			s.Round,
+			styleDim.Render(fmt.Sprintf("%d words", s.Words)),
 		)
 	}
 	return b.String()
@@ -339,9 +316,10 @@ func (m *Model) renderFooter() string {
 	hints := []string{
 		"q quit",
 		"r refresh",
-		"?" + " help",
+		"? help",
 		"↑/↓ focus round",
 		"1-9 jump",
+		"0 latest",
 	}
 	return styleDim.Render(strings.Join(hints, "  ·  "))
 }
@@ -354,50 +332,31 @@ func (m *Model) renderHelp() string {
 		"  r                  reload dashboard-state.json from disk",
 		"  ?                  toggle this help",
 		"  ↑ / k              focus previous round",
-		"  ↓ / j              focus next round (0 = latest)",
+		"  ↓ / j              focus next round (wraps to latest)",
 		"  1 … 9              jump focus to a specific round",
+		"  0                  clear focus (follow latest)",
 		"",
 		styleDim.Render("press ? to close"),
 	}, "\n")
 	return styleHelpOverlay.Render(body)
 }
 
-// resolvedFocus returns the absolute round number the user is focused on,
-// defaulting to the latest (active) round if 0.
+// resolvedFocus returns the round the user is focused on, defaulting to the
+// latest round when no explicit focus is set.
 func (m *Model) resolvedFocus() int {
 	if m.focusedRound > 0 {
 		return m.focusedRound
 	}
-	if r := activeRound(m.state); r != nil {
-		return int(r.Round)
-	}
-	return 0
+	return int(m.cache.currentRoundNumber())
 }
 
-// currentRound returns the highest round number present, or 0.
-func currentRound(s *model.State) uint32 {
-	var max uint32
-	for _, r := range s.Rounds {
-		if r.Round > max {
-			max = r.Round
-		}
+// spinnerIndex samples a spinner frame from m.now so the animation advances
+// even if a tick is dropped; falling back to 0 when now is zero value (tests).
+func (m *Model) spinnerIndex() int {
+	if m.now.IsZero() {
+		return 0
 	}
-	return max
-}
-
-// activeRound returns the round still in progress (or latest if forum
-// completed). nil when no rounds yet.
-func activeRound(s *model.State) *model.RoundSummary {
-	if len(s.Rounds) == 0 {
-		return nil
-	}
-	idx := 0
-	for i := range s.Rounds {
-		if s.Rounds[i].Round > s.Rounds[idx].Round {
-			idx = i
-		}
-	}
-	return &s.Rounds[idx]
+	return int(m.now.UnixMilli()/int64(tickInterval/time.Millisecond)) % len(spinnerFrames)
 }
 
 func statusBadge(st model.Status) string {
@@ -405,7 +364,7 @@ func statusBadge(st model.Status) string {
 	case model.StatusCompleted:
 		return styleStatusDone.Render("completed")
 	case model.StatusInProgress:
-		return styleStatus.Render("in_progress")
+		return styleAccent.Render("in_progress")
 	default:
 		return stylePending.Render("pending")
 	}
@@ -413,7 +372,7 @@ func statusBadge(st model.Status) string {
 
 func formatElapsed(s *model.State, now time.Time) string {
 	if s.Created.IsZero() {
-		return "—"
+		return emDash
 	}
 	end := s.Updated
 	if s.Status == model.StatusInProgress || end.IsZero() {
@@ -423,13 +382,11 @@ func formatElapsed(s *model.State, now time.Time) string {
 	if d < 0 {
 		d = 0
 	}
-	mins := int(d.Minutes())
-	secs := int(d.Seconds()) % 60
-	return fmt.Sprintf("%dm %02ds", mins, secs)
+	return fmt.Sprintf("%dm %02ds", int(d.Minutes()), int(d.Seconds())%60)
 }
 
-// renderBar draws a horizontal progress bar of the given cell width, using
-// eighth-block glyphs for smooth fractional fills.
+// renderBar draws a horizontal progress bar using eighth-block glyphs for
+// smooth fractional fills.
 func renderBar(value, scale float64, width int) string {
 	if width <= 0 || scale <= 0 {
 		return ""
@@ -444,6 +401,7 @@ func renderBar(value, scale float64, width int) string {
 	eighths := int(ratio * float64(width) * 8)
 	full := eighths / 8
 	rem := eighths % 8
+
 	var b strings.Builder
 	if full > 0 {
 		b.WriteString(styleBarFill.Render(strings.Repeat("█", full)))
@@ -458,8 +416,8 @@ func renderBar(value, scale float64, width int) string {
 	return b.String()
 }
 
-// renderSparkline draws a per-round score trace. Missing leading/trailing
-// rounds show as space so the line stays anchored to total rounds.
+// renderSparkline draws a per-round score trace. Missing rounds render as
+// space so the trace stays anchored to the full round count.
 func renderSparkline(values []float64, scale float64, totalRounds uint32) string {
 	width := int(totalRounds)
 	if width < len(values) {
@@ -474,20 +432,14 @@ func renderSparkline(values []float64, scale float64, totalRounds uint32) string
 			b.WriteRune(' ')
 			continue
 		}
-		v := values[i]
-		if scale <= 0 {
-			b.WriteRune(spark[0])
-			continue
-		}
-		ratio := v / scale
+		ratio := values[i] / scale
 		switch {
-		case ratio < 0:
+		case scale <= 0, ratio < 0:
 			ratio = 0
 		case ratio > 1:
 			ratio = 1
 		}
-		idx := int(ratio * float64(len(spark)-1))
-		b.WriteRune(spark[idx])
+		b.WriteRune(spark[int(ratio*float64(len(spark)-1))])
 	}
 	return styleBarFill.Render(b.String())
 }
@@ -501,7 +453,7 @@ func padRight(s string, n int) string {
 
 func dashIfEmpty(s string) string {
 	if s == "" {
-		return "—"
+		return emDash
 	}
 	return s
 }

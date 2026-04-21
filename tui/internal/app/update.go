@@ -24,10 +24,9 @@ type refreshedMsg struct {
 
 const tickInterval = 150 * time.Millisecond
 
-// Init starts the tailer goroutine, subscribes to its channels, and kicks
-// off the animation tick.
 func (m *Model) Init() tea.Cmd {
 	go m.tailer.Run(m.ctx)
+	m.ticking = true
 	return tea.Batch(
 		waitForEvent(m.tailer.Events()),
 		waitForTailerErr(m.tailer.Errors()),
@@ -41,19 +40,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 
 	case tickMsg:
 		m.now = time.Time(msg)
-		m.tick++
+		if !m.animating() {
+			m.ticking = false
+			return m, nil
+		}
 		return m, tickCmd()
 
 	case tailerEventMsg:
 		if err := m.state.Apply(msg.Event); err != nil {
 			m.tailErr = err
 		}
-		return m, waitForEvent(m.tailer.Events())
+		return m, tea.Batch(waitForEvent(m.tailer.Events()), m.resumeTick())
 
 	case tailerErrMsg:
 		m.tailErr = msg.Err
@@ -71,7 +72,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = msg.State
 			m.loadErr = nil
 		}
-		return m, nil
+		return m, m.resumeTick()
 	}
 	return m, nil
 }
@@ -92,6 +93,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.focusNextRound()
 		return m, nil
+	case "0":
+		m.focusedRound = 0
+		return m, nil
 	}
 
 	if r := msg.Runes; len(r) == 1 && r[0] >= '1' && r[0] <= '9' {
@@ -100,13 +104,24 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// resumeTick restarts the animation loop after a state event if the forum has
+// transitioned back to in-progress. No-op if already ticking.
+func (m *Model) resumeTick() tea.Cmd {
+	if m.ticking || !m.animating() {
+		return nil
+	}
+	m.ticking = true
+	return tickCmd()
+}
+
 func (m *Model) focusPrevRound() {
-	if len(m.state.Rounds) == 0 {
+	last := maxRoundNumber(m.state)
+	if last == 0 {
 		return
 	}
 	current := m.focusedRound
 	if current == 0 {
-		current = int(m.state.Rounds[len(m.state.Rounds)-1].Round)
+		current = last
 	}
 	if current > 1 {
 		m.focusedRound = current - 1
@@ -114,16 +129,25 @@ func (m *Model) focusPrevRound() {
 }
 
 func (m *Model) focusNextRound() {
-	if len(m.state.Rounds) == 0 {
+	last := maxRoundNumber(m.state)
+	if last == 0 {
 		return
 	}
-	last := int(m.state.Rounds[len(m.state.Rounds)-1].Round)
-	current := m.focusedRound
-	if current == 0 || current >= last {
+	if m.focusedRound == 0 || m.focusedRound >= last {
 		m.focusedRound = 0
 		return
 	}
-	m.focusedRound = current + 1
+	m.focusedRound++
+}
+
+func maxRoundNumber(s *model.State) int {
+	var max uint32
+	for _, r := range s.Rounds {
+		if r.Round > max {
+			max = r.Round
+		}
+	}
+	return int(max)
 }
 
 func (m *Model) jumpToRound(n int) {

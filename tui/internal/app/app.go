@@ -19,11 +19,11 @@ type Model struct {
 	loadErr  error
 	tailErr  error
 
-	width, height int
-	now           time.Time
-	tick          uint64
-	focusedRound  int
-	showHelp      bool
+	now          time.Time
+	focusedRound int
+	showHelp     bool
+	ticking      bool
+	cache        viewCache
 }
 
 // New reads the snapshot (if any) and opens the tailer watcher. The tailer
@@ -60,3 +60,8 @@ func (m *Model) Close() {
 
 // State returns the current reduced state. Intended for tests.
 func (m *Model) State() *model.State { return m.state }
+
+// animating returns true while the spinner needs to advance — i.e. the forum
+// is still in progress. Completed/pending forums hold the frame and stop the
+// tick loop, saving per-tick CPU when the dashboard is parked open.
+func (m *Model) animating() bool { return m.state.Status == model.StatusInProgress }

@@ -10,13 +10,16 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/Abeansits/ting/tui/internal/data"
 	"github.com/Abeansits/ting/tui/internal/model"
 )
 
-// Force plain output so tests assert on literal substrings, not ANSI codes.
-func init() { lipgloss.SetColorProfile(0) }
+// Force plain output so tests assert on literal substrings. lipgloss's
+// color profile is otherwise auto-detected from the TERM env and can still
+// emit ANSI even under `go test`.
+func init() { lipgloss.SetColorProfile(termenv.Ascii) }
 
 func TestView_EmptyState(t *testing.T) {
 	m := newTestModel(t, t.TempDir())
