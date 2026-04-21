@@ -174,6 +174,24 @@ func TestFormatElapsed(t *testing.T) {
 	}
 }
 
+func TestRefreshedMsg_ClearsLoadErrOnSuccess(t *testing.T) {
+	m := newTestModel(t, t.TempDir())
+	m.loadErr = errDummy("first read failed")
+
+	// A successful refresh with equal-or-lower seq must still clear the
+	// prior error so a transient failure doesn't stick on screen forever.
+	equalState := &model.State{LatestSeq: m.state.LatestSeq}
+	updated, _ := m.Update(refreshedMsg{State: equalState})
+	m = updated.(*Model)
+	if m.loadErr != nil {
+		t.Fatalf("loadErr should clear on successful refresh, got %v", m.loadErr)
+	}
+}
+
+type errDummy string
+
+func (e errDummy) Error() string { return string(e) }
+
 // --- helpers ---
 
 func newTestModel(t *testing.T, dir string) *Model {

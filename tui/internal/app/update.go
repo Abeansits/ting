@@ -68,9 +68,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadErr = msg.Err
 			return m, nil
 		}
+		// Any successful read clears the prior snapshot error, even when
+		// the tailer already carries us past the reloaded snapshot.
+		m.loadErr = nil
 		if msg.State != nil && msg.State.LatestSeq > m.state.LatestSeq {
 			m.state = msg.State
-			m.loadErr = nil
 		}
 		return m, m.resumeTick()
 	}
