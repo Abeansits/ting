@@ -74,6 +74,26 @@ enum Commands {
         /// --dashboard). Binds 127.0.0.1 only. Default 3420.
         #[arg(long, default_value_t = 3420)]
         port: u16,
+
+        /// Suppress the auto-open of the dashboard URL in a browser
+        /// (only meaningful with --dashboard).
+        #[arg(long)]
+        no_open: bool,
+    },
+
+    /// Serve the live dashboard for a forum directory without running the
+    /// forum itself. Works for in-progress and completed forums.
+    Serve {
+        /// Forum ID
+        forum_id: String,
+
+        /// Port for the dashboard HTTP server. Binds 127.0.0.1 only.
+        #[arg(long, default_value_t = 3420)]
+        port: u16,
+
+        /// Suppress the auto-open of the dashboard URL in a browser.
+        #[arg(long)]
+        no_open: bool,
     },
 
     /// Check the status of a forum
@@ -199,6 +219,7 @@ fn main() -> Result<()> {
             no_classifier,
             no_metric_scoring,
             port,
+            no_open,
         } => cmd_new(
             &topic,
             &participant,
@@ -210,7 +231,13 @@ fn main() -> Result<()> {
             no_classifier,
             no_metric_scoring,
             port,
+            no_open,
         ),
+        Commands::Serve {
+            forum_id,
+            port,
+            no_open,
+        } => cmd_serve(&forum_id, port, no_open),
         Commands::Status { forum_id, round } => cmd_status(&forum_id, round),
         Commands::List => cmd_list(),
         Commands::Result {
@@ -265,6 +292,7 @@ fn cmd_new(
     no_classifier: bool,
     no_metric_scoring: bool,
     port: u16,
+    no_open: bool,
 ) -> Result<()> {
     // Validate timeout format early
     config::parse_duration(timeout)?;
@@ -370,7 +398,7 @@ fn cmd_new(
     };
 
     if dashboard {
-        run_with_dashboard(forum_config, forum_path, run_opts, port)
+        run_with_dashboard(forum_config, forum_path, run_opts, port, no_open)
     } else {
         protocol::run_forum(&forum_config, &forum_path, &run_opts)
     }
@@ -388,6 +416,7 @@ fn run_with_dashboard(
     forum_path: PathBuf,
     run_opts: protocol::RunOptions,
     port: u16,
+    no_open: bool,
 ) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -397,11 +426,7 @@ fn run_with_dashboard(
     let server_path = forum_path.clone();
 
     rt.block_on(async move {
-        let listener = server::bind_loopback(port).await?;
-        let bound = listener
-            .local_addr()
-            .context("Failed to read bound address")?;
-        eprintln!("  Dashboard  http://{bound}");
+        let listener = start_dashboard(port, no_open).await?;
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -434,6 +459,97 @@ fn run_with_dashboard(
             }
         }
     })
+}
+
+/// Serve the dashboard for an existing forum without running it. Used to
+/// inspect completed forums or attach to an already-running one. Ctrl+C
+/// triggers a graceful shutdown so in-flight SSE clients get a clean close.
+fn cmd_serve(forum_id: &str, port: u16, no_open: bool) -> Result<()> {
+    let forum_path = substrate::forum_dir(forum_id);
+    if !forum_path.exists() {
+        anyhow::bail!("Forum not found: {}", forum_id);
+    }
+
+    let status = if substrate::is_completed(&forum_path) {
+        "completed"
+    } else {
+        "in progress"
+    };
+    eprintln!();
+    eprintln!("  Forum   {}", forum_id);
+    eprintln!("  Status  {}", status);
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build tokio runtime")?;
+
+    rt.block_on(async move {
+        let listener = start_dashboard(port, no_open).await?;
+        eprintln!("  Press Ctrl+C to stop");
+
+        // Graceful shutdown on first Ctrl+C; on second Ctrl+C or a 5s stall
+        // (long-lived SSE clients that hold axum's graceful-shutdown open)
+        // force exit. Tokio doesn't restore the default SIGINT handler after
+        // the first install, so the fallback is the correctness guarantee.
+        server::serve(listener, forum_path, async {
+            let _ = tokio::signal::ctrl_c().await;
+            eprintln!("\n  Shutting down — Ctrl+C again to force.");
+            tokio::spawn(async {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+                }
+                std::process::exit(130);
+            });
+        })
+        .await
+    })
+}
+
+/// Bind the dashboard listener on a loopback port, print the URL, and
+/// optionally launch the browser. Split from `server::serve` so callers stay
+/// in charge of the shutdown future.
+async fn start_dashboard(port: u16, no_open: bool) -> Result<tokio::net::TcpListener> {
+    let listener = server::bind_loopback(port).await?;
+    let bound = listener
+        .local_addr()
+        .context("Failed to read bound address")?;
+    let url = format!("http://{bound}");
+    eprintln!("  Dashboard  {url}");
+    if !no_open && std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        try_open_browser(&url);
+    }
+    Ok(listener)
+}
+
+/// Spawn the platform's "open this URL" helper. Failure is silent — the URL
+/// was already printed, so the user can click or copy. The child is reaped in
+/// a detached thread to avoid leaving a zombie for the server's lifetime.
+fn try_open_browser(url: &str) {
+    let mut cmd = if cfg!(target_os = "macos") {
+        let mut c = std::process::Command::new("open");
+        c.arg(url);
+        c
+    } else if cfg!(target_os = "windows") {
+        // `start` is a shell built-in, not an exe. Route through cmd.
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", "", url]);
+        c
+    } else {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(url);
+        c
+    };
+    if let Ok(mut child) = cmd
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
 }
 
 fn cmd_status(forum_id: &str, round: Option<u32>) -> Result<()> {
