@@ -1,46 +1,305 @@
 //! Axum server for the live dashboard. Binds loopback only — the dashboard
 //! is an opt-in personal dev UI, never a public service.
+//!
+//! Phase 2B adds a JSONL tailer → SSE bridge:
+//! - A background task watches `dashboard-events.jsonl` via `notify` and
+//!   broadcasts each appended event over a `tokio::sync::broadcast` channel.
+//! - `GET /api/events` subscribes first, then replays the full file as
+//!   backlog, then forwards live events, deduped by seq. Heartbeats every
+//!   15s keep intermediaries from dropping idle connections.
 
 use anyhow::{Context, Result};
+use async_stream::stream;
 use axum::{
     Router,
     extract::State,
     http::StatusCode,
-    response::{Html, Json},
+    response::{
+        Html, Json,
+        sse::{Event as SseEvent, Sse},
+    },
     routing::get,
 };
+use notify::{
+    Config as NotifyConfig, Event as NotifyEvent, RecommendedWatcher, RecursiveMode, Watcher,
+};
+use serde_json::Value;
+use std::convert::Infallible;
+use std::fs::File;
 use std::future::Future;
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::sync::broadcast;
+use tokio_stream::Stream;
 
 use crate::dashboard_state;
+use crate::events::{DashboardEvent, EVENT_LOG_FILENAME, EventType, event_log_path};
 
 const DASHBOARD_HTML: &str = include_str!("static/dashboard.html");
+
+/// Room for a burst of events between the tailer and the slowest subscriber.
+/// 1024 covers a full forum's worth of events with plenty of headroom.
+const EVENT_CHANNEL_CAPACITY: usize = 1024;
+
+/// Cadence of the `event: ping` heartbeat the SSE endpoint emits between
+/// real events so proxies and `EventSource` clients don't time out.
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Clone)]
 struct AppState {
     forum_dir: PathBuf,
+    events_tx: broadcast::Sender<DashboardEvent>,
 }
 
-/// Build the router for a forum directory. Exposed to tests so they can
-/// exercise handlers via `tower::ServiceExt::oneshot` without binding a port.
+/// Build the router for a forum directory. Spawns the JSONL tailer as a
+/// background task; caller must be running inside a Tokio runtime.
 pub(crate) fn router(forum_dir: PathBuf) -> Router {
+    let (events_tx, _) = broadcast::channel::<DashboardEvent>(EVENT_CHANNEL_CAPACITY);
+    spawn_tailer(forum_dir.clone(), events_tx.clone());
     Router::new()
         .route("/", get(serve_dashboard))
         .route("/api/state", get(serve_state))
-        .with_state(AppState { forum_dir })
+        .route("/api/events", get(serve_events))
+        .with_state(AppState {
+            forum_dir,
+            events_tx,
+        })
 }
 
 async fn serve_dashboard() -> Html<&'static str> {
     Html(DASHBOARD_HTML)
 }
 
-async fn serve_state(State(app): State<AppState>) -> ApiResult<Json<serde_json::Value>> {
+async fn serve_state(State(app): State<AppState>) -> ApiResult<Json<Value>> {
     match dashboard_state::read_state(&app.forum_dir).map_err(internal_error)? {
         Some(state) => Ok(Json(serde_json::to_value(&state).map_err(internal_error)?)),
         None => Err(not_found("dashboard state not yet available")),
     }
+}
+
+/// SSE stream: `init` (snapshot, if any) → `update` for each backlog event →
+/// `update` for each new event → `ping` heartbeats → clean end on
+/// `forum_complete` or channel close.
+async fn serve_events(
+    State(app): State<AppState>,
+) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
+    // Subscribe BEFORE reading the file so any event appended during the
+    // backlog read is captured by the broadcast and can be deduped by seq.
+    let mut rx = app.events_tx.subscribe();
+    let forum_dir = app.forum_dir.clone();
+
+    let sse_stream = stream! {
+        if let Ok(Some(state)) = dashboard_state::read_state(&forum_dir)
+            && let Ok(body) = serde_json::to_string(&state)
+        {
+            yield Ok(SseEvent::default().event("init").data(body));
+        }
+
+        let (backlog, mut max_seq) = match read_full_log(&forum_dir) {
+            Ok(events) => {
+                let last = events.last().map(|e| e.seq).unwrap_or(0);
+                (events, last)
+            }
+            Err(e) => {
+                eprintln!("sse backlog read error: {e:#}");
+                (Vec::new(), 0)
+            }
+        };
+
+        let mut completed = false;
+        for ev in backlog {
+            if matches!(ev.event_type, EventType::ForumComplete) {
+                completed = true;
+            }
+            if let Some(sse) = event_to_sse(&ev) {
+                yield Ok(sse);
+            }
+            if completed {
+                return;
+            }
+        }
+
+        let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        ticker.tick().await; // discard the immediate first tick
+
+        loop {
+            tokio::select! {
+                recv = rx.recv() => match recv {
+                    Ok(ev) => {
+                        if ev.seq <= max_seq {
+                            continue; // already delivered via backlog
+                        }
+                        max_seq = ev.seq;
+                        let done = matches!(ev.event_type, EventType::ForumComplete);
+                        if let Some(sse) = event_to_sse(&ev) {
+                            yield Ok(sse);
+                        }
+                        if done {
+                            return;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        eprintln!("sse client lagged, closing stream ({n} events dropped)");
+                        return;
+                    }
+                },
+                _ = ticker.tick() => {
+                    yield Ok(SseEvent::default().event("ping"));
+                }
+            }
+        }
+    };
+
+    Sse::new(sse_stream)
+}
+
+fn event_to_sse(ev: &DashboardEvent) -> Option<SseEvent> {
+    let body = serde_json::to_string(ev).ok()?;
+    Some(
+        SseEvent::default()
+            .event("update")
+            .id(ev.seq.to_string())
+            .data(body),
+    )
+}
+
+/// Read the full JSONL log. Malformed lines are skipped with a warning so a
+/// single corrupt record can't block the whole dashboard.
+fn read_full_log(forum_dir: &Path) -> Result<Vec<DashboardEvent>> {
+    let path = event_log_path(forum_dir);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let reader = BufReader::new(
+        File::open(&path).with_context(|| format!("Failed to open {}", path.display()))?,
+    );
+    let mut events = Vec::new();
+    for (line_no, line) in reader.lines().enumerate() {
+        let line =
+            line.with_context(|| format!("Failed to read {}:{}", path.display(), line_no + 1))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<DashboardEvent>(&line) {
+            Ok(ev) => events.push(ev),
+            Err(e) => eprintln!(
+                "warning: skipping malformed event at {}:{}: {}",
+                path.display(),
+                line_no + 1,
+                e
+            ),
+        }
+    }
+    Ok(events)
+}
+
+/// Spawn the file-tailer background task. Errors inside the tailer are
+/// logged and the task exits; clients will still receive backlog via file
+/// reads, but lose live streaming. Good enough for v0.4.
+fn spawn_tailer(forum_dir: PathBuf, events_tx: broadcast::Sender<DashboardEvent>) {
+    tokio::spawn(async move {
+        if let Err(e) = run_tailer(&forum_dir, &events_tx).await {
+            eprintln!("event tailer error: {e:#}");
+        }
+    });
+}
+
+async fn run_tailer(forum_dir: &Path, events_tx: &broadcast::Sender<DashboardEvent>) -> Result<()> {
+    let events_path = event_log_path(forum_dir);
+    let target_name = std::ffi::OsStr::new(EVENT_LOG_FILENAME);
+
+    // Unbounded because notify's callback is sync and must not block.
+    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+    let mut watcher = RecommendedWatcher::new(
+        move |res: notify::Result<NotifyEvent>| {
+            let Ok(event) = res else { return };
+            if event
+                .paths
+                .iter()
+                .any(|p| p.file_name() == Some(target_name))
+            {
+                let _ = notify_tx.send(());
+            }
+        },
+        NotifyConfig::default(),
+    )
+    .with_context(|| "Failed to create event-log watcher")?;
+    watcher
+        .watch(forum_dir, RecursiveMode::NonRecursive)
+        .with_context(|| format!("Failed to watch {}", forum_dir.display()))?;
+
+    // Seek to end: existing content is delivered to clients via backlog read,
+    // not rebroadcast. That also keeps the broadcast buffer small.
+    let mut cursor: u64 = std::fs::metadata(&events_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    while notify_rx.recv().await.is_some() {
+        // Coalesce bursts of notifications — one read per quiet period.
+        while notify_rx.try_recv().is_ok() {}
+
+        match tail_since(&events_path, cursor) {
+            Ok((new_cursor, new_events)) => {
+                cursor = new_cursor;
+                for ev in new_events {
+                    // Err just means no subscribers; benign.
+                    let _ = events_tx.send(ev);
+                }
+            }
+            Err(e) => eprintln!("event tailer read error: {e:#}"),
+        }
+    }
+    drop(watcher);
+    Ok(())
+}
+
+/// Read any complete lines from `path` starting at byte offset `cursor`.
+/// Returns the new cursor (start of any trailing partial line) and parsed
+/// events. Handles truncation (file shorter than cursor) by restarting at 0.
+fn tail_since(path: &Path, cursor: u64) -> Result<(u64, Vec<DashboardEvent>)> {
+    if !path.exists() {
+        return Ok((cursor, Vec::new()));
+    }
+    let mut file =
+        File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
+    let len = file.metadata()?.len();
+    let start = if len < cursor { 0 } else { cursor };
+    file.seek(SeekFrom::Start(start))?;
+
+    let mut reader = BufReader::new(file);
+    let mut events = Vec::new();
+    let mut new_cursor = start;
+    let mut buf = String::new();
+    loop {
+        buf.clear();
+        let n = reader.read_line(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        if !buf.ends_with('\n') {
+            // Partial line — leave cursor at its start; next wake will re-read.
+            break;
+        }
+        new_cursor += n as u64;
+        let line = buf.trim_end_matches(['\n', '\r']);
+        if line.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<DashboardEvent>(line) {
+            Ok(ev) => events.push(ev),
+            Err(e) => eprintln!(
+                "warning: skipping malformed event at {}: {}",
+                path.display(),
+                e
+            ),
+        }
+    }
+    Ok((new_cursor, events))
 }
 
 type ApiError = (StatusCode, Json<serde_json::Value>);
@@ -86,11 +345,16 @@ mod tests {
     use super::*;
     use axum::body::{Body, to_bytes};
     use axum::http::Request;
+    use chrono::Utc;
+    use serde_json::json;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
+    use tokio_stream::StreamExt as _;
     use tower::ServiceExt;
 
     use crate::dashboard_state::{DashboardState, ForumStatus, write_state};
+    use crate::events::{EVENT_VERSION, append_event};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -108,6 +372,17 @@ mod tests {
             .await
             .unwrap()
             .to_vec()
+    }
+
+    fn make_event(seq: u64, event_type: EventType) -> DashboardEvent {
+        DashboardEvent {
+            version: EVENT_VERSION,
+            seq,
+            forum_id: "ting-test-0001".into(),
+            timestamp: Utc::now(),
+            event_type,
+            payload: json!({ "round": seq }),
+        }
     }
 
     #[tokio::test]
@@ -183,5 +458,206 @@ mod tests {
             .expect("server did not shut down in time")
             .expect("server task panicked")
             .unwrap();
+    }
+
+    #[test]
+    fn tail_since_reads_complete_lines_and_holds_partial() {
+        let dir = tmp_dir("tail-partial");
+        let path = event_log_path(&dir);
+        let mut body = serde_json::to_string(&make_event(1, EventType::RoundStarted)).unwrap();
+        body.push('\n');
+        body.push_str(&serde_json::to_string(&make_event(2, EventType::RoundStarted)).unwrap());
+        body.push('\n');
+        // Partial third line, no trailing newline.
+        body.push_str("{\"version\":1,\"seq\":3"); // incomplete JSON, no \n
+        fs::write(&path, &body).unwrap();
+
+        let (cursor, events) = tail_since(&path, 0).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].seq, 1);
+        assert_eq!(events[1].seq, 2);
+        // Cursor should sit at the start of the partial line.
+        let full = fs::read(&path).unwrap();
+        assert!(cursor < full.len() as u64);
+        assert_eq!(&full[cursor as usize..], b"{\"version\":1,\"seq\":3");
+    }
+
+    #[test]
+    fn tail_since_reads_only_new_bytes_since_cursor() {
+        let dir = tmp_dir("tail-incremental");
+        let path = event_log_path(&dir);
+        append_event(&dir, &make_event(1, EventType::RoundStarted)).unwrap();
+        let (cursor_a, events_a) = tail_since(&path, 0).unwrap();
+        assert_eq!(events_a.len(), 1);
+
+        append_event(&dir, &make_event(2, EventType::RoundStarted)).unwrap();
+        append_event(&dir, &make_event(3, EventType::RoundStarted)).unwrap();
+        let (_cursor_b, events_b) = tail_since(&path, cursor_a).unwrap();
+        assert_eq!(events_b.len(), 2);
+        assert_eq!(events_b[0].seq, 2);
+        assert_eq!(events_b[1].seq, 3);
+    }
+
+    #[test]
+    fn tail_since_skips_malformed_lines() {
+        let dir = tmp_dir("tail-malformed");
+        let path = event_log_path(&dir);
+        append_event(&dir, &make_event(1, EventType::RoundStarted)).unwrap();
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"not-json\n")
+            .unwrap();
+        append_event(&dir, &make_event(2, EventType::RoundStarted)).unwrap();
+
+        let (_cursor, events) = tail_since(&path, 0).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].seq, 1);
+        assert_eq!(events[1].seq, 2);
+    }
+
+    #[tokio::test]
+    async fn tailer_broadcasts_appended_events() {
+        let dir = tmp_dir("tailer-broadcast");
+        let (tx, mut rx) = broadcast::channel::<DashboardEvent>(32);
+        spawn_tailer(dir.clone(), tx);
+
+        // Give notify a moment to register the watch on the forum dir.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        for seq in 1..=3u64 {
+            append_event(&dir, &make_event(seq, EventType::RoundStarted)).unwrap();
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut got = Vec::new();
+        while got.len() < 3 && Instant::now() < deadline {
+            match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
+                Ok(Ok(ev)) => got.push(ev),
+                _ => continue,
+            }
+        }
+        assert_eq!(got.len(), 3, "expected 3 events, got {}", got.len());
+        assert!(
+            got.iter()
+                .enumerate()
+                .all(|(i, ev)| ev.seq == (i + 1) as u64),
+            "seq not monotonic: {:?}",
+            got.iter().map(|e| e.seq).collect::<Vec<_>>()
+        );
+    }
+
+    /// Read the SSE body as a string, stopping after `min_bytes` have arrived
+    /// or `deadline` expires. Never blocks forever.
+    async fn collect_sse(body: axum::body::Body, min_bytes: usize, deadline: Duration) -> String {
+        let mut data_stream = body.into_data_stream();
+        let mut out = Vec::new();
+        let end = Instant::now() + deadline;
+        while out.len() < min_bytes && Instant::now() < end {
+            let remaining = end.saturating_duration_since(Instant::now());
+            match tokio::time::timeout(remaining, data_stream.next()).await {
+                Ok(Some(Ok(bytes))) => out.extend_from_slice(&bytes),
+                _ => break,
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    fn sse_update_seqs(body: &str) -> Vec<u64> {
+        let mut seqs = Vec::new();
+        let mut is_update = false;
+        for line in body.lines() {
+            if let Some(rest) = line.strip_prefix("event:") {
+                is_update = rest.trim() == "update";
+            } else if is_update && let Some(rest) = line.strip_prefix("data:") {
+                if let Ok(ev) = serde_json::from_str::<DashboardEvent>(rest.trim()) {
+                    seqs.push(ev.seq);
+                }
+                is_update = false;
+            } else if line.is_empty() {
+                is_update = false;
+            }
+        }
+        seqs
+    }
+
+    #[tokio::test]
+    async fn api_events_replays_backlog_then_streams_live() {
+        let dir = tmp_dir("api-events-live");
+        append_event(&dir, &make_event(1, EventType::ForumStarted)).unwrap();
+        append_event(&dir, &make_event(2, EventType::RoundStarted)).unwrap();
+
+        let app = router(dir.clone());
+        let resp = app
+            .oneshot(Request::get("/api/events").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(ct.starts_with("text/event-stream"), "content-type was {ct}");
+
+        let body = resp.into_body();
+        // Give the tailer a beat to register, then push a live event.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        append_event(&dir, &make_event(3, EventType::RoundStarted)).unwrap();
+        append_event(&dir, &make_event(4, EventType::ForumComplete)).unwrap();
+
+        // Collect enough bytes to likely include all 4 update events.
+        let text = collect_sse(body, 4_000, Duration::from_secs(3)).await;
+        let seqs = sse_update_seqs(&text);
+        assert!(
+            seqs.len() >= 4,
+            "expected at least 4 update events, got {seqs:?}\nbody:\n{text}"
+        );
+        assert_eq!(&seqs[..4], &[1, 2, 3, 4], "seqs: {seqs:?}\nbody:\n{text}");
+    }
+
+    #[tokio::test]
+    async fn api_events_replays_completed_forum_and_ends() {
+        let dir = tmp_dir("api-events-completed");
+        append_event(&dir, &make_event(1, EventType::ForumStarted)).unwrap();
+        append_event(&dir, &make_event(2, EventType::ForumComplete)).unwrap();
+
+        let app = router(dir);
+        let resp = app
+            .oneshot(Request::get("/api/events").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Stream should end quickly after the final event.
+        let text = collect_sse(resp.into_body(), 10_000, Duration::from_secs(2)).await;
+        let seqs = sse_update_seqs(&text);
+        assert_eq!(seqs, vec![1, 2], "body:\n{text}");
+    }
+
+    #[tokio::test]
+    async fn api_events_emits_init_when_state_present() {
+        let dir = tmp_dir("api-events-init");
+        let mut state =
+            DashboardState::new("ting-2026-04-19-abcd1234", "topic", vec!["codex".into()], 2);
+        state.latest_seq = 0;
+        write_state(&dir, &state).unwrap();
+        append_event(&dir, &make_event(1, EventType::ForumStarted)).unwrap();
+        append_event(&dir, &make_event(2, EventType::ForumComplete)).unwrap();
+
+        let app = router(dir);
+        let resp = app
+            .oneshot(Request::get("/api/events").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let text = collect_sse(resp.into_body(), 4_000, Duration::from_secs(2)).await;
+        assert!(
+            text.contains("event: init") || text.contains("event:init"),
+            "body:\n{text}"
+        );
+        assert!(text.contains("ting-2026-04-19-abcd1234"), "body:\n{text}");
     }
 }
