@@ -168,6 +168,14 @@ pub enum ConvergenceResult {
     Divergent { score: f32, key_disagreements: Vec<String> },
 }
 
+impl ConvergenceResult {
+    pub fn score(&self) -> f32 {
+        match self {
+            Self::Converged { score, .. } | Self::Divergent { score, .. } => *score,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct RoundData {

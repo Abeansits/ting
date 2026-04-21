@@ -132,7 +132,15 @@ fn parse_judge_response(output: &str, threshold: u32) -> Result<ConvergenceResul
     for line in output.lines() {
         let line = line.trim();
         if let Some(s) = line.strip_prefix("SCORE:") {
-            score = Some(s.trim().parse::<f32>().unwrap_or(5.0));
+            // Filter NaN/inf — serde_json panics on non-finite numbers when
+            // the score later lands in a dashboard event payload.
+            score = Some(
+                s.trim()
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|v| v.is_finite())
+                    .unwrap_or(5.0),
+            );
             in_disagreements = false;
         } else if let Some(s) = line.strip_prefix("SUMMARY:") {
             summary = s.trim().to_string();
@@ -207,6 +215,19 @@ DISAGREEMENTS:
         let output = "SCORE: 7\nSUMMARY: At threshold.\nDISAGREEMENTS:\n- None major";
         let result = parse_judge_response(output, 7).unwrap();
         assert!(matches!(result, ConvergenceResult::Converged { .. }));
+    }
+
+    #[test]
+    fn test_parse_judge_non_finite_score_falls_back_to_5() {
+        for raw in ["SCORE: nan\nSUMMARY: x", "SCORE: inf\nSUMMARY: x", "SCORE: -inf\nSUMMARY: x"] {
+            let result = parse_judge_response(raw, 7).unwrap();
+            let score = match result {
+                ConvergenceResult::Converged { score, .. }
+                | ConvergenceResult::Divergent { score, .. } => score,
+            };
+            assert!(score.is_finite(), "score from {raw:?} should be finite, got {score}");
+            assert!((score - 5.0).abs() < 0.01, "expected 5.0 fallback, got {score}");
+        }
     }
 
     #[test]

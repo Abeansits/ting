@@ -389,12 +389,15 @@ fn cmd_new(
     eprintln!("  Rules  {} rounds, {} timeout", max_rounds, timeout);
     eprintln!();
 
-    // Dashboard artifacts: classifier runs with `--dashboard`, scoring follows
-    // the classifier. Without `--dashboard` behavior matches v0.3.
+    // Dashboard artifacts: classifier + scoring gate on their own opt-outs;
+    // lifecycle event emission tracks `--dashboard` unconditionally so the
+    // Convergence / Latest Synthesis widgets still populate under
+    // `--no-classifier`. Without `--dashboard`, behavior matches v0.3.
     let classify = dashboard && !no_classifier;
     let run_opts = protocol::RunOptions {
         classify,
         score: classify && !no_metric_scoring,
+        emit_events: dashboard,
     };
 
     if dashboard {
