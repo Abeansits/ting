@@ -79,7 +79,13 @@ async fn serve_js() -> impl IntoResponse {
 
 fn static_asset(content_type: &'static str, body: &'static str) -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, HeaderValue::from_static(content_type))],
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ),
+        ],
         body,
     )
 }
@@ -444,6 +450,12 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let ct = content_type(&resp);
         assert!(ct.starts_with("text/css"), "content-type was {ct}");
+        assert_eq!(
+            resp.headers()
+                .get("x-content-type-options")
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff"),
+        );
         let body = String::from_utf8(body_bytes(resp).await).unwrap();
         assert!(body.contains("--bg"), "expected CSS vars in body");
     }
@@ -465,6 +477,12 @@ mod tests {
             ct.starts_with("text/javascript") || ct.starts_with("application/javascript"),
             "content-type was {ct}"
         );
+        assert_eq!(
+            resp.headers()
+                .get("x-content-type-options")
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff"),
+        );
         let body = String::from_utf8(body_bytes(resp).await).unwrap();
         // Every event type the server may broadcast must have a JS handler.
         for needle in [
@@ -480,6 +498,12 @@ mod tests {
         ] {
             assert!(body.contains(needle), "JS missing handler for `{needle}`");
         }
+        // Closes the stream when init reports an already-completed forum so
+        // clients don't sit in "live" waiting for an update that will never come.
+        assert!(
+            body.contains("\"completed\"") && body.contains("es.close()"),
+            "JS must close SSE when init snapshot reports completed state",
+        );
     }
 
     #[tokio::test]

@@ -61,6 +61,7 @@
 
     state.rounds.clear();
     state.convergenceHistory = [];
+    state.metrics = [];
     for (const r of snapshot.rounds || []) {
       const entry = ensureRound(r.round, r.stage);
       for (const p of r.participants_responded || []) entry.responded.add(p);
@@ -414,7 +415,12 @@
       try {
         applyState(JSON.parse(ev.data));
         render();
-        setConnection("live");
+        if (state.status === "completed") {
+          es.close();
+          setConnection("ended");
+        } else {
+          setConnection("live");
+        }
       } catch (err) {
         console.error("init parse error", err);
       }
