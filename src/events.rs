@@ -124,6 +124,24 @@ pub fn append_event(forum_dir: &Path, event: &DashboardEvent) -> Result<()> {
 /// event before it crashed?") without re-appending duplicates. Malformed
 /// lines are skipped; an IO error on open propagates.
 pub fn log_contains(forum_dir: &Path, event_type: EventType) -> Result<bool> {
+    scan_log(forum_dir, |evt| evt.event_type == event_type)
+}
+
+/// True if the log contains an event of the given type whose payload has a
+/// `round` field equal to `round`. Used by per-round resume paths (e.g.
+/// `metric_scores` is emitted once per round, so idempotency is keyed on
+/// `(type, round)` rather than `type` alone).
+pub fn log_contains_round(forum_dir: &Path, event_type: EventType, round: u32) -> Result<bool> {
+    scan_log(forum_dir, |evt| {
+        evt.event_type == event_type
+            && evt.payload.get("round").and_then(|v| v.as_u64()) == Some(round as u64)
+    })
+}
+
+fn scan_log<F>(forum_dir: &Path, mut predicate: F) -> Result<bool>
+where
+    F: FnMut(&DashboardEvent) -> bool,
+{
     let path = event_log_path(forum_dir);
     if !path.exists() {
         return Ok(false);
@@ -136,10 +154,10 @@ pub fn log_contains(forum_dir: &Path, event_type: EventType) -> Result<bool> {
         if line.trim().is_empty() {
             continue;
         }
-        if let Ok(evt) = serde_json::from_str::<DashboardEvent>(&line) {
-            if evt.event_type == event_type {
-                return Ok(true);
-            }
+        if let Ok(evt) = serde_json::from_str::<DashboardEvent>(&line)
+            && predicate(&evt)
+        {
+            return Ok(true);
         }
     }
     Ok(false)
@@ -407,6 +425,29 @@ mod tests {
         .unwrap();
 
         assert_eq!(next_seq(&dir).unwrap(), 3);
+    }
+
+    #[test]
+    fn log_contains_round_matches_payload_round() {
+        let dir = tmp_dir("log-contains-round");
+        // Two metric_scores events for different rounds.
+        for r in 1..=2u32 {
+            append_event(
+                &dir,
+                &DashboardEvent::new(
+                    r as u64,
+                    "fid",
+                    EventType::MetricScores,
+                    json!({ "round": r, "scores": [] }),
+                ),
+            )
+            .unwrap();
+        }
+        assert!(log_contains_round(&dir, EventType::MetricScores, 1).unwrap());
+        assert!(log_contains_round(&dir, EventType::MetricScores, 2).unwrap());
+        assert!(!log_contains_round(&dir, EventType::MetricScores, 3).unwrap());
+        // Different type, same round → no match.
+        assert!(!log_contains_round(&dir, EventType::Convergence, 1).unwrap());
     }
 
     #[test]

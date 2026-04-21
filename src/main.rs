@@ -4,6 +4,7 @@ mod convergence;
 mod dashboard_state;
 mod eval;
 mod events;
+mod metric_scoring;
 mod protocol;
 mod report;
 mod substrate;
@@ -61,6 +62,12 @@ enum Commands {
         /// Useful when you want lifecycle events without the extra LLM call.
         #[arg(long)]
         no_classifier: bool,
+
+        /// Skip the per-round metric scoring pass (only meaningful with
+        /// --dashboard). Dashboard then shows static metric labels with no
+        /// animated values — roughly 50% fewer Fire Keeper calls.
+        #[arg(long)]
+        no_metric_scoring: bool,
     },
 
     /// Check the status of a forum
@@ -184,6 +191,7 @@ fn main() -> Result<()> {
             output_format,
             dashboard,
             no_classifier,
+            no_metric_scoring,
         } => cmd_new(
             &topic,
             &participant,
@@ -193,6 +201,7 @@ fn main() -> Result<()> {
             output_format.as_deref(),
             dashboard,
             no_classifier,
+            no_metric_scoring,
         ),
         Commands::Status { forum_id, round } => cmd_status(&forum_id, round),
         Commands::List => cmd_list(),
@@ -239,6 +248,7 @@ fn cmd_new(
     output_format: Option<&str>,
     dashboard: bool,
     no_classifier: bool,
+    no_metric_scoring: bool,
 ) -> Result<()> {
     // Validate timeout format early
     config::parse_duration(timeout)?;
@@ -338,11 +348,12 @@ fn cmd_new(
     eprintln!("  Rules  {} rounds, {} timeout", max_rounds, timeout);
     eprintln!();
 
-    // Plan-v2 entanglement: classifier runs iff --dashboard is on and
-    // --no-classifier is not set. Without --dashboard we stay bit-for-bit
-    // compatible with v0.3 behavior.
+    // Dashboard artifacts: classifier runs with `--dashboard`, scoring follows
+    // the classifier. Without `--dashboard` behavior matches v0.3.
+    let classify = dashboard && !no_classifier;
     let run_opts = protocol::RunOptions {
-        classify: dashboard && !no_classifier,
+        classify,
+        score: classify && !no_metric_scoring,
     };
     protocol::run_forum(&forum_config, &forum_path, &run_opts)?;
 
