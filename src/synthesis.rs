@@ -5,7 +5,9 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Duration;
 
-const FIRE_KEEPER_TIMEOUT: Duration = Duration::from_secs(600);
+/// Wall-clock budget for a single Fire Keeper call. Shared with the pre-round
+/// classifier (`classifier.rs`) so the two paths can't silently drift.
+pub(crate) const FIRE_KEEPER_TIMEOUT: Duration = Duration::from_secs(600);
 
 fn invoke(synth_config: &SynthesisSection, prompt: &str) -> Result<String> {
     let model = config::resolve_model(&synth_config.model);

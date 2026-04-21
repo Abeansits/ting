@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ting.dev/schemas/metrics.schema.json",
+  "title": "ClassifierMetricsFile",
+  "description": "On-disk shape of round-0/metrics.json, the pre-round classifier output. The metrics array is also carried verbatim inside the ClassifierMetricsPayload event on dashboard-events.jsonl.",
+  "type": "object",
+  "required": ["version", "forum_id", "generated_at", "model", "metrics"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Snapshot schema version. v0.4 Phase 1B ships version=1."
+    },
+    "forum_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 UTC timestamp of when the classifier ran."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Resolved model ID (or custom command tag) used for the classifier call. Informational."
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 11,
+      "description": "5-10 question-specific metrics plus the mandatory dissent axis (6-11 items total). Exactly one metric must have id 'dissent_axis' and 'mandatory: true'.",
+      "items": { "$ref": "#/$defs/ClassifierMetric" }
+    }
+  },
+  "$defs": {
+    "ClassifierMetric": {
+      "type": "object",
+      "required": ["id", "name", "scale"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "scale": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 10,
+          "description": "Upper bound of the score range; scores are integers 1..=scale. Tight cap keeps the dashboard bar-chart renderable without rescaling."
+        },
+        "description": {
+          "type": "string"
+        },
+        "mandatory": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

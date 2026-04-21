@@ -1,18 +1,35 @@
-use crate::{config, convergence, substrate, synthesis, types::*};
+use crate::{classifier, config, convergence, substrate, synthesis, types::*};
 use anyhow::Result;
 use rand::seq::SliceRandom;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Runtime flags that shape a single `run_forum` invocation. Not persisted to
+/// `meta.toml` — resume semantics come from on-disk artifacts.
+#[derive(Debug, Clone, Default)]
+pub struct RunOptions {
+    /// When true, run the pre-round classifier before round 1. Controlled by
+    /// `--dashboard` minus `--no-classifier` at the CLI layer.
+    pub classify: bool,
+}
+
 /// Run a complete forum deliberation through the modified Delphi protocol.
 /// Supports auto-extend: if convergence score < 5 at max_rounds, runs one extra round
 /// to avoid premature termination while capping sycophancy from over-deliberation.
-pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path) -> Result<()> {
+pub fn run_forum(
+    forum_config: &ForumConfig,
+    forum_path: &Path,
+    opts: &RunOptions,
+) -> Result<()> {
     let mut prior_rounds: Vec<RoundData> = Vec::new();
     let review_mode = is_review_mode(forum_config);
 
     // Warn if judge model family overlaps with participants
     warn_judge_overlap(forum_config);
+
+    if opts.classify {
+        run_classifier(forum_config, forum_path)?;
+    }
     let mut effective_max = forum_config.forum.max_rounds;
     let mut auto_extended = false;
     let mut last_convergence: Option<ConvergenceResult> = None;
@@ -609,6 +626,46 @@ fn warn_judge_overlap(config: &ForumConfig) {
             return; // one warning is enough
         }
     }
+}
+
+/// Drive the pre-round classifier: pick topic-specific metrics plus the
+/// mandatory dissent axis, write `round-0/metrics.json`, emit a
+/// `classifier_metrics` event. Skips cleanly on resume if `metrics.json`
+/// already exists.
+fn run_classifier(forum_config: &ForumConfig, forum_path: &Path) -> Result<()> {
+    let synth = &forum_config.synthesis;
+    let model = config::resolve_model(&synth.model).to_string();
+    let custom_command = synth.command.clone();
+
+    let invoke = |prompt: &str| -> Result<String> {
+        substrate::invoke_fire_keeper_model(
+            custom_command.as_deref(),
+            &model,
+            prompt,
+            synthesis::FIRE_KEEPER_TIMEOUT,
+        )
+    };
+
+    eprintln!("  Running pre-round classifier (Fire Keeper)...");
+    let (file, outcome) = classifier::ensure_classifier(
+        forum_path,
+        &forum_config.forum.id,
+        &forum_config.forum.topic,
+        forum_config.forum.context.as_deref(),
+        &model,
+        invoke,
+    )?;
+
+    let verb = match outcome {
+        classifier::ClassifierOutcome::Fresh => "picked",
+        classifier::ClassifierOutcome::Resumed => "reused",
+    };
+    eprintln!(
+        "  \u{2713} Classifier {} {} metrics (incl. dissent axis)",
+        verb,
+        file.metrics.len(),
+    );
+    Ok(())
 }
 
 /// Detect review mode from output_format field or topic keywords
