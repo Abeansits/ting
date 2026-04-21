@@ -107,6 +107,36 @@ pub(crate) fn parse_scoring_response(
     Ok(response.scores)
 }
 
+/// Guard against a `metric-scores.json` whose envelope disagrees with the
+/// call site — e.g. a file that was copied into the wrong round directory, or
+/// emitted by a future version. Without this, the resume branch would happily
+/// backfill a `metric_scores` event with a mismatched `round`, and the
+/// `log_contains_round` idempotency check would never see it.
+fn validate_envelope(file: &MetricScoresFile, forum_id: &str, round: u32) -> Result<()> {
+    if file.version != SCORES_VERSION {
+        bail!(
+            "metric-scores.json version {} does not match expected {}",
+            file.version,
+            SCORES_VERSION,
+        );
+    }
+    if file.forum_id != forum_id {
+        bail!(
+            "metric-scores.json forum_id `{}` does not match expected `{}`",
+            file.forum_id,
+            forum_id,
+        );
+    }
+    if file.round != round {
+        bail!(
+            "metric-scores.json round {} does not match expected {}",
+            file.round,
+            round,
+        );
+    }
+    Ok(())
+}
+
 fn validate_scores(scores: &[MetricScore], metrics: &[ClassifierMetric]) -> Result<()> {
     let expected: HashMap<&str, u32> =
         metrics.iter().map(|m| (m.id.as_str(), m.scale)).collect();
@@ -228,6 +258,7 @@ where
     F: FnOnce(&str) -> Result<String>,
 {
     if let Some(existing) = read_scores(forum_dir, round)? {
+        validate_envelope(&existing, forum_id, round)?;
         validate_scores(&existing.scores, &classifier_metrics.metrics).with_context(|| {
             format!(
                 "Existing round-{}/metric-scores.json failed validation",
@@ -672,6 +703,93 @@ mod tests {
         assert!(scores_path(&dir, 2).exists());
         let log = fs::read_to_string(events::event_log_path(&dir)).unwrap();
         assert_eq!(log.lines().count(), 2);
+    }
+
+    #[test]
+    fn ensure_resume_rejects_mismatched_envelope_round() {
+        // File landed at round-1 but its `round` field says 2. Without the
+        // envelope check the resume branch would backfill a round-2 event
+        // while looking for round-1 in the log — never satisfying idempotency.
+        let dir = tmp_dir("ensure-resume-mismatch-round");
+        let metrics = sample_metrics();
+        let mut seeded = sample_file(2);
+        fs::create_dir_all(substrate::round_dir(&dir, 1)).unwrap();
+        let body = serde_json::to_vec_pretty(&seeded).unwrap();
+        fs::write(scores_path(&dir, 1), body).unwrap();
+        seeded.round = 1; // keep `seeded` consistent for any later assertion
+
+        let invoke = |_: &str| -> Result<String> {
+            panic!("Scoring should not invoke LLM on resume")
+        };
+        let err = ensure_scores(
+            &dir,
+            &seeded.forum_id,
+            "topic",
+            1,
+            &metrics,
+            &sample_responses(),
+            None,
+            "claude-opus-4-6",
+            invoke,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("round"), "got: {err}");
+    }
+
+    #[test]
+    fn ensure_resume_rejects_mismatched_forum_id() {
+        let dir = tmp_dir("ensure-resume-mismatch-forum");
+        let metrics = sample_metrics();
+        let seeded = sample_file(1);
+        write_scores(&dir, &seeded).unwrap();
+
+        let invoke = |_: &str| -> Result<String> {
+            panic!("Scoring should not invoke LLM on resume")
+        };
+        let err = ensure_scores(
+            &dir,
+            "different-forum-id",
+            "topic",
+            1,
+            &metrics,
+            &sample_responses(),
+            None,
+            "claude-opus-4-6",
+            invoke,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("forum_id"), "got: {err}");
+    }
+
+    #[test]
+    fn ensure_resume_rejects_future_version() {
+        let dir = tmp_dir("ensure-resume-future-version");
+        let metrics = sample_metrics();
+        let mut seeded = sample_file(1);
+        seeded.version = SCORES_VERSION + 1;
+        fs::create_dir_all(substrate::round_dir(&dir, 1)).unwrap();
+        let body = serde_json::to_vec_pretty(&seeded).unwrap();
+        fs::write(scores_path(&dir, 1), body).unwrap();
+
+        let invoke = |_: &str| -> Result<String> {
+            panic!("Scoring should not invoke LLM on resume")
+        };
+        let err = ensure_scores(
+            &dir,
+            &seeded.forum_id,
+            "topic",
+            1,
+            &metrics,
+            &sample_responses(),
+            None,
+            "claude-opus-4-6",
+            invoke,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("version"), "got: {err}");
     }
 
     #[test]

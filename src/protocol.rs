@@ -106,18 +106,31 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
         // Per-round metric scoring (dashboard substrate). Requires classifier
         // output; the CLI layer guarantees `opts.score` implies `opts.classify`,
         // but guard on the Option anyway so a future caller can't break it.
+        //
+        // Scoring failures are warn-and-continue: the dashboard is opt-in and
+        // the rest of the round's output (synthesis, claims, convergence) is
+        // independently valuable. A flaky Fire-Keeper call shouldn't abort
+        // work already done. Next resume will retry this round's scoring
+        // because the file was never written.
         if let Some(ref metrics_file) = classifier_metrics
             && opts.score
         {
             let last = prior_rounds.last().expect("just pushed");
-            run_scoring(
+            if let Err(e) = run_scoring(
                 forum_config,
                 forum_path,
                 metrics_file,
                 round_num,
                 &last.responses,
                 last.synthesis.as_deref(),
-            )?;
+            ) {
+                eprintln!(
+                    "  Warning: metric scoring failed for round {}: {}. \
+                     Continuing forum; dashboard will show classifier metrics \
+                     without a score for this round.",
+                    round_num, e,
+                );
+            }
         }
 
         // Score per-participant alignment for position shift tracking (every round)
