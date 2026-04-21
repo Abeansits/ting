@@ -112,7 +112,7 @@ pub fn run_eval(cfg: &EvalConfig) -> Result<EvalResult> {
     #[cfg(not(unix))]
     std::fs::write(eval_dir.join("forum.txt"), forum_path.display().to_string())?;
 
-    protocol::run_forum(&forum_config, &forum_path)?;
+    protocol::run_forum(&forum_config, &forum_path, &protocol::RunOptions::default())?;
 
     // Read forum synthesis
     let forum_synthesis = substrate::read_file(&forum_path.join("final").join("synthesis.md"))

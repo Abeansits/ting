@@ -1,3 +1,4 @@
+mod classifier;
 mod config;
 mod convergence;
 mod dashboard_state;
@@ -48,6 +49,18 @@ enum Commands {
         /// Output format: "review" produces a prioritized findings list instead of narrative
         #[arg(long)]
         output_format: Option<String>,
+
+        /// Enable the v0.4 dashboard substrate: runs the pre-round classifier
+        /// and emits events to dashboard-events.jsonl. The live server ships in
+        /// Phase 2; today this populates the artifacts those downstream
+        /// consumers will read.
+        #[arg(long)]
+        dashboard: bool,
+
+        /// Skip the pre-round classifier (only meaningful with --dashboard).
+        /// Useful when you want lifecycle events without the extra LLM call.
+        #[arg(long)]
+        no_classifier: bool,
     },
 
     /// Check the status of a forum
@@ -169,7 +182,18 @@ fn main() -> Result<()> {
             max_rounds,
             context,
             output_format,
-        } => cmd_new(&topic, &participant, &timeout, max_rounds, context.as_deref(), output_format.as_deref()),
+            dashboard,
+            no_classifier,
+        } => cmd_new(
+            &topic,
+            &participant,
+            &timeout,
+            max_rounds,
+            context.as_deref(),
+            output_format.as_deref(),
+            dashboard,
+            no_classifier,
+        ),
         Commands::Status { forum_id, round } => cmd_status(&forum_id, round),
         Commands::List => cmd_list(),
         Commands::Result {
@@ -205,6 +229,7 @@ fn main() -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_new(
     topic: &str,
     participants: &[String],
@@ -212,6 +237,8 @@ fn cmd_new(
     max_rounds: u32,
     context: Option<&str>,
     output_format: Option<&str>,
+    dashboard: bool,
+    no_classifier: bool,
 ) -> Result<()> {
     // Validate timeout format early
     config::parse_duration(timeout)?;
@@ -311,8 +338,13 @@ fn cmd_new(
     eprintln!("  Rules  {} rounds, {} timeout", max_rounds, timeout);
     eprintln!();
 
-    // Run the deliberation (blocking)
-    protocol::run_forum(&forum_config, &forum_path)?;
+    // Plan-v2 entanglement: classifier runs iff --dashboard is on and
+    // --no-classifier is not set. Without --dashboard we stay bit-for-bit
+    // compatible with v0.3 behavior.
+    let run_opts = protocol::RunOptions {
+        classify: dashboard && !no_classifier,
+    };
+    protocol::run_forum(&forum_config, &forum_path, &run_opts)?;
 
     Ok(())
 }
