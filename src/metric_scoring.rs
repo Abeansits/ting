@@ -1,20 +1,9 @@
-//! Per-round metric scoring.
-//!
-//! After each round's responses + synthesis are written, ask the Fire Keeper to
-//! score every classifier metric on its own scale. One LLM call per round
-//! (batched over all metrics). The result lands on disk as
-//! `round-N/metric-scores.json` and as a `metric_scores` event on
-//! `dashboard-events.jsonl`.
-//!
-//! Resume semantics: if `round-N/metric-scores.json` already exists we
-//! short-circuit — no LLM call, no duplicate event. If the file exists but the
-//! matching event is missing (crash between write and append), the event is
-//! backfilled on resume. Same shape as `classifier::ensure_classifier`.
-//!
-//! `--no-metric-scoring` bypasses this module at the CLI layer; when on, the
-//! dashboard sees static metric definitions with no animated values.
+//! Per-round metric scoring. Mirrors `classifier::ensure_classifier`'s
+//! resume semantics: if `round-N/metric-scores.json` already exists, skip the
+//! LLM call; if the file is present but the matching event is missing,
+//! backfill the event on resume. One batched Fire Keeper call per round.
 
-use crate::classifier::{ClassifierMetric, ClassifierMetricsFile};
+use crate::classifier::{self, ClassifierMetric, ClassifierMetricsFile};
 use crate::events::{self, DashboardEvent, EventType};
 use crate::substrate;
 use anyhow::{bail, Context, Result};
@@ -26,14 +15,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Snapshot schema version written to `metric-scores.json`. Bump on breaking
-/// changes to the top-level file shape; additive score fields do not bump.
-pub const SCORES_VERSION: u32 = 1;
+pub(crate) const SCORES_VERSION: u32 = 1;
+pub(crate) const SCORES_FILENAME: &str = "metric-scores.json";
 
-pub const SCORES_FILENAME: &str = "metric-scores.json";
-
-/// A single metric's score for one round. `rationale` is optional — the LLM
-/// usually supplies one, but consumers (dashboard, TUI) must not require it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MetricScore {
     pub metric_id: String,
@@ -42,7 +26,6 @@ pub struct MetricScore {
     pub rationale: Option<String>,
 }
 
-/// On-disk envelope for `round-N/metric-scores.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MetricScoresFile {
     pub version: u32,
@@ -53,21 +36,18 @@ pub struct MetricScoresFile {
     pub scores: Vec<MetricScore>,
 }
 
-/// Shape the LLM emits — `{ "scores": [...] }`. Kept separate from the on-disk
-/// envelope so `parse_scoring_response` can deserialize straight into it.
+/// Wrapper the LLM emits. Kept separate from the on-disk envelope so the
+/// parser can deserialize straight into it without going through `Value`.
 #[derive(Debug, Deserialize)]
 struct ScoringResponse {
     scores: Vec<MetricScore>,
 }
 
-pub fn scores_path(forum_dir: &Path, round: u32) -> PathBuf {
+pub(crate) fn scores_path(forum_dir: &Path, round: u32) -> PathBuf {
     substrate::round_dir(forum_dir, round).join(SCORES_FILENAME)
 }
 
-/// Build the scoring prompt. Lists every metric with its scale and asks for a
-/// single JSON object back — fractional scores allowed (e.g. 7.5) because the
-/// dashboard renders them as gauges rather than integer bars.
-pub fn build_scoring_prompt(
+pub(crate) fn build_scoring_prompt(
     topic: &str,
     round: u32,
     metrics: &[ClassifierMetric],
@@ -116,29 +96,20 @@ pub fn build_scoring_prompt(
     prompt
 }
 
-/// Parse a scoring response into a validated vector. Tolerates code fences the
-/// same way `classifier::parse_classifier_response` does. Enforces: every
-/// classifier metric id is scored exactly once, no scores reference unknown
-/// ids, each score is finite and within its metric's scale.
-pub fn parse_scoring_response(raw: &str, metrics: &[ClassifierMetric]) -> Result<Vec<MetricScore>> {
-    let cleaned = strip_code_fences(raw.trim());
+pub(crate) fn parse_scoring_response(
+    raw: &str,
+    metrics: &[ClassifierMetric],
+) -> Result<Vec<MetricScore>> {
+    let cleaned = classifier::strip_code_fences(raw.trim());
     let response: ScoringResponse = serde_json::from_str(cleaned)
         .with_context(|| "Scoring response was not valid JSON with a `scores` array")?;
     validate_scores(&response.scores, metrics)?;
     Ok(response.scores)
 }
 
-fn strip_code_fences(s: &str) -> &str {
-    let trimmed = s.trim();
-    let body = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .unwrap_or(trimmed);
-    body.trim().strip_suffix("```").unwrap_or(body).trim()
-}
-
 fn validate_scores(scores: &[MetricScore], metrics: &[ClassifierMetric]) -> Result<()> {
-    let expected: HashMap<&str, u32> = metrics.iter().map(|m| (m.id.as_str(), m.scale)).collect();
+    let expected: HashMap<&str, u32> =
+        metrics.iter().map(|m| (m.id.as_str(), m.scale)).collect();
 
     let mut seen: HashSet<&str> = HashSet::with_capacity(scores.len());
     for s in scores {
@@ -172,15 +143,15 @@ fn validate_scores(scores: &[MetricScore], metrics: &[ClassifierMetric]) -> Resu
     Ok(())
 }
 
-/// Atomic write of `metric-scores.json` under `round-N/`. Same
-/// `.tmp` + rename + fsync pattern as `classifier::write_metrics`.
-pub fn write_scores(forum_dir: &Path, file: &MetricScoresFile) -> Result<()> {
+/// Atomic write via `.tmp` + rename + fsync. Same pattern as
+/// `classifier::write_metrics`.
+pub(crate) fn write_scores(forum_dir: &Path, file: &MetricScoresFile) -> Result<()> {
     let dir = substrate::create_round_dir(forum_dir, file.round)?;
     let final_path = dir.join(SCORES_FILENAME);
     let tmp_path = final_path.with_extension("json.tmp");
 
-    let mut body =
-        serde_json::to_vec_pretty(file).with_context(|| "Failed to serialize MetricScoresFile")?;
+    let mut body = serde_json::to_vec_pretty(file)
+        .with_context(|| "Failed to serialize MetricScoresFile")?;
     body.push(b'\n');
 
     {
@@ -210,7 +181,7 @@ pub fn write_scores(forum_dir: &Path, file: &MetricScoresFile) -> Result<()> {
     Ok(())
 }
 
-pub fn read_scores(forum_dir: &Path, round: u32) -> Result<Option<MetricScoresFile>> {
+pub(crate) fn read_scores(forum_dir: &Path, round: u32) -> Result<Option<MetricScoresFile>> {
     let path = scores_path(forum_dir, round);
     if !path.exists() {
         return Ok(None);
@@ -233,35 +204,6 @@ fn emit_scores_event(forum_dir: &Path, file: &MetricScoresFile) -> Result<()> {
     events::append_event(forum_dir, &event)
 }
 
-/// True if a `metric_scores` event for the given round already exists in the
-/// log. Scoring happens once per round, so event presence is keyed on `round`
-/// inside the payload — not just event type.
-fn log_contains_round_scores(forum_dir: &Path, round: u32) -> Result<bool> {
-    let path = events::event_log_path(forum_dir);
-    if !path.exists() {
-        return Ok(false);
-    }
-    let body = fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read event log: {}", path.display()))?;
-    for line in body.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(evt) = serde_json::from_str::<DashboardEvent>(line) else {
-            continue;
-        };
-        if evt.event_type != EventType::MetricScores {
-            continue;
-        }
-        if evt.payload.get("round").and_then(|v| v.as_u64()) == Some(round as u64) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Whether `ensure_scores` ran the LLM (`Fresh`) or reused a prior round's
-/// on-disk `metric-scores.json` (`Resumed`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScoringOutcome {
     Fresh,
@@ -269,8 +211,7 @@ pub enum ScoringOutcome {
 }
 
 /// Score one round's metrics, writing the result to disk and emitting the
-/// matching event. See module docs for resume semantics. The closure is
-/// injected so tests can stub the LLM.
+/// matching event. Closure is injected so tests can stub the LLM.
 #[allow(clippy::too_many_arguments)]
 pub fn ensure_scores<F>(
     forum_dir: &Path,
@@ -293,21 +234,16 @@ where
                 round
             )
         })?;
-        if !log_contains_round_scores(forum_dir, round)? {
+        if !events::log_contains_round(forum_dir, EventType::MetricScores, round)? {
             emit_scores_event(forum_dir, &existing)?;
         }
         return Ok((existing, ScoringOutcome::Resumed));
     }
 
-    let prompt = build_scoring_prompt(
-        topic,
-        round,
-        &classifier_metrics.metrics,
-        responses,
-        synthesis,
-    );
-    let raw =
-        invoke(&prompt).with_context(|| format!("Scoring LLM call failed for round {}", round))?;
+    let prompt =
+        build_scoring_prompt(topic, round, &classifier_metrics.metrics, responses, synthesis);
+    let raw = invoke(&prompt)
+        .with_context(|| format!("Scoring LLM call failed for round {}", round))?;
     let scores = parse_scoring_response(&raw, &classifier_metrics.metrics)?;
 
     let file = MetricScoresFile {
@@ -392,8 +328,6 @@ mod tests {
         r
     }
 
-    // ---- prompt tests ------------------------------------------------------
-
     #[test]
     fn prompt_includes_topic_round_metrics_and_responses() {
         let metrics = sample_metrics();
@@ -422,8 +356,6 @@ mod tests {
         assert!(!prompt.contains("## Synthesis"));
     }
 
-    // ---- parse tests -------------------------------------------------------
-
     #[test]
     fn parse_well_formed_response() {
         let metrics = sample_metrics();
@@ -443,7 +375,6 @@ mod tests {
     #[test]
     fn parse_rejects_missing_metric_id() {
         let metrics = sample_metrics();
-        // drop dissent_axis
         let bad = json!({
             "scores": [
                 { "metric_id": "feasibility", "score": 7.5 },
@@ -485,7 +416,6 @@ mod tests {
     #[test]
     fn parse_rejects_score_out_of_range() {
         let metrics = sample_metrics();
-        // cost has scale 5; 9.0 is over
         let bad = json!({
             "scores": [
                 { "metric_id": "feasibility", "score": 7.5 },
@@ -527,9 +457,6 @@ mod tests {
     #[test]
     fn parse_rejects_non_finite_score() {
         let metrics = sample_metrics();
-        // Build a JSON literal with NaN? JSON doesn't allow NaN; use a bound-hack
-        // via a very large number — the scale check catches it, and a separate
-        // test verifies non-finite rejection at the validate layer.
         let scores = vec![MetricScore {
             metric_id: "feasibility".into(),
             score: f32::NAN,
@@ -549,8 +476,6 @@ mod tests {
             .to_string();
         assert!(err.contains("valid JSON"), "got: {err}");
     }
-
-    // ---- write/read round trip --------------------------------------------
 
     fn sample_file(round: u32) -> MetricScoresFile {
         let metrics = sample_metrics();
@@ -589,8 +514,6 @@ mod tests {
         assert!(scores_path(&dir, 1).exists());
     }
 
-    // ---- schema golden ----------------------------------------------------
-
     fn load_event_validator() -> jsonschema::Validator {
         let schema_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("schemas")
@@ -607,10 +530,7 @@ mod tests {
         let payload = scores_payload(file.round, &file.scores);
         let event = DashboardEvent::new(1, &file.forum_id, EventType::MetricScores, payload);
         let value = serde_json::to_value(&event).unwrap();
-        let errors: Vec<String> = validator
-            .iter_errors(&value)
-            .map(|e| e.to_string())
-            .collect();
+        let errors: Vec<String> = validator.iter_errors(&value).map(|e| e.to_string()).collect();
         assert!(
             errors.is_empty(),
             "event failed schema validation: {:#?}\nvalue: {}",
@@ -618,8 +538,6 @@ mod tests {
             serde_json::to_string_pretty(&value).unwrap()
         );
     }
-
-    // ---- integration: ensure_scores ---------------------------------------
 
     #[test]
     fn ensure_fresh_invokes_llm_writes_file_and_event() {
@@ -728,7 +646,7 @@ mod tests {
     #[test]
     fn ensure_per_round_independence() {
         // Round 1 already scored and logged; Round 2 is fresh. The round-1
-        // event presence must not cause the round-2 path to short-circuit.
+        // event presence must not short-circuit the round-2 path.
         let dir = tmp_dir("per-round-independence");
         let metrics = sample_metrics();
         let r1 = sample_file(1);
@@ -761,7 +679,6 @@ mod tests {
         let dir = tmp_dir("ensure-resume-tampered");
         let metrics = sample_metrics();
         let mut seeded = sample_file(1);
-        // Tamper: overwrite feasibility with an out-of-range score.
         if let Some(s) = seeded
             .scores
             .iter_mut()

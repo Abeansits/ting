@@ -106,18 +106,18 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
         // Per-round metric scoring (dashboard substrate). Requires classifier
         // output; the CLI layer guarantees `opts.score` implies `opts.classify`,
         // but guard on the Option anyway so a future caller can't break it.
-        if opts.score {
-            if let Some(ref metrics_file) = classifier_metrics {
-                let last = prior_rounds.last().expect("just pushed");
-                run_scoring(
-                    forum_config,
-                    forum_path,
-                    metrics_file,
-                    round_num,
-                    &last.responses,
-                    last.synthesis.as_deref(),
-                )?;
-            }
+        if let Some(ref metrics_file) = classifier_metrics
+            && opts.score
+        {
+            let last = prior_rounds.last().expect("just pushed");
+            run_scoring(
+                forum_config,
+                forum_path,
+                metrics_file,
+                round_num,
+                &last.responses,
+                last.synthesis.as_deref(),
+            )?;
         }
 
         // Score per-participant alignment for position shift tracking (every round)

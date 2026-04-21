@@ -227,15 +227,8 @@ fn main() -> Result<()> {
             html,
             report,
         } => cmd_eval(
-            &topic,
-            &baseline,
-            &forum,
-            judge.as_deref(),
-            context.as_deref(),
-            &timeout,
-            max_rounds,
-            html,
-            report.as_deref(),
+            &topic, &baseline, &forum, judge.as_deref(), context.as_deref(),
+            &timeout, max_rounds, html, report.as_deref(),
         ),
         Commands::Preset { action } => match action {
             PresetAction::Add { name, command } => cmd_preset_add(&name, &command),
@@ -348,14 +341,15 @@ fn cmd_new(
     eprintln!();
     eprintln!("  Forum  {}", id);
     eprintln!("  Topic  {}", topic);
-    eprintln!("  With   {}", forum_config.participants.names.join(", "));
+    eprintln!(
+        "  With   {}",
+        forum_config.participants.names.join(", ")
+    );
     eprintln!("  Rules  {} rounds, {} timeout", max_rounds, timeout);
     eprintln!();
 
-    // Plan-v2 entanglement: classifier runs iff --dashboard is on and
-    // --no-classifier is not set. Per-round scoring further requires
-    // classifier output and is skipped when --no-metric-scoring is set.
-    // Without --dashboard we stay bit-for-bit compatible with v0.3 behavior.
+    // Dashboard artifacts: classifier runs with `--dashboard`, scoring follows
+    // the classifier. Without `--dashboard` behavior matches v0.3.
     let classify = dashboard && !no_classifier;
     let run_opts = protocol::RunOptions {
         classify,
@@ -389,10 +383,7 @@ fn cmd_status(forum_id: &str, round: Option<u32>) -> Result<()> {
         if completed {
             "completed".to_string()
         } else {
-            format!(
-                "in progress (round {} of {})",
-                current, cfg.forum.max_rounds
-            )
+            format!("in progress (round {} of {})", current, cfg.forum.max_rounds)
         }
     );
     println!();
@@ -672,8 +663,8 @@ fn cmd_respond(
             // No file: open $EDITOR with a draft, then atomic-write to response path
             let editor = find_editor();
 
-            let draft_path =
-                std::env::temp_dir().join(format!("ting-respond-{}.md", uuid::Uuid::new_v4()));
+            let draft_path = std::env::temp_dir()
+                .join(format!("ting-respond-{}.md", uuid::Uuid::new_v4()));
 
             // Seed draft with existing content if user is re-editing
             if response_path.exists() {
@@ -807,20 +798,18 @@ fn cmd_eval(
     };
 
     // Resolve context
-    let context_text =
-        match context {
-            Some(c) => {
-                let path = std::path::Path::new(c);
-                if path.exists() {
-                    Some(std::fs::read_to_string(path).with_context(|| {
-                        format!("Failed to read context file: {}", path.display())
-                    })?)
-                } else {
-                    Some(c.to_string())
-                }
+    let context_text = match context {
+        Some(c) => {
+            let path = std::path::Path::new(c);
+            if path.exists() {
+                Some(std::fs::read_to_string(path)
+                    .with_context(|| format!("Failed to read context file: {}", path.display()))?)
+            } else {
+                Some(c.to_string())
             }
-            None => None,
-        };
+        }
+        None => None,
+    };
 
     print_banner();
     eprintln!();
@@ -872,10 +861,7 @@ fn cmd_preset_list() -> Result<()> {
         };
         println!("{:<14} {:<9} {}", name, tag, cmd_display);
     }
-    println!(
-        "{:<14} {:<9} {}",
-        "human", "built-in", "(manual — writes files directly)"
-    );
+    println!("{:<14} {:<9} {}", "human", "built-in", "(manual — writes files directly)");
     Ok(())
 }
 

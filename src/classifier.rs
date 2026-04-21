@@ -141,7 +141,9 @@ pub fn parse_classifier_response(raw: &str) -> Result<Vec<ClassifierMetric>> {
     Ok(response.metrics)
 }
 
-fn strip_code_fences(s: &str) -> &str {
+/// Strip optional ``` or ```json code fences that some LLMs wrap JSON output in.
+/// Shared with `metric_scoring::parse_scoring_response`.
+pub(crate) fn strip_code_fences(s: &str) -> &str {
     let trimmed = s.trim();
     let body = trimmed
         .strip_prefix("```json")
