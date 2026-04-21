@@ -1,12 +1,5 @@
 //! Axum server for the live dashboard. Binds loopback only — the dashboard
 //! is an opt-in personal dev UI, never a public service.
-//!
-//! Phase 2B adds a JSONL tailer → SSE bridge:
-//! - A background task watches `dashboard-events.jsonl` via `notify` and
-//!   broadcasts each appended event over a `tokio::sync::broadcast` channel.
-//! - `GET /api/events` subscribes first, then replays the full file as
-//!   backlog, then forwards live events, deduped by seq. Heartbeats every
-//!   15s keep intermediaries from dropping idle connections.
 
 use anyhow::{Context, Result};
 use async_stream::stream;
@@ -54,8 +47,7 @@ struct AppState {
     events_tx: broadcast::Sender<DashboardEvent>,
 }
 
-/// Build the router for a forum directory. Spawns the JSONL tailer as a
-/// background task; caller must be running inside a Tokio runtime.
+/// Must be called inside a Tokio runtime — spawns the JSONL tailer task.
 pub(crate) fn router(forum_dir: PathBuf) -> Router {
     let (events_tx, _) = broadcast::channel::<DashboardEvent>(EVENT_CHANNEL_CAPACITY);
     spawn_tailer(forum_dir.clone(), events_tx.clone());
@@ -80,14 +72,11 @@ async fn serve_state(State(app): State<AppState>) -> ApiResult<Json<Value>> {
     }
 }
 
-/// SSE stream: `init` (snapshot, if any) → `update` for each backlog event →
-/// `update` for each new event → `ping` heartbeats → clean end on
-/// `forum_complete` or channel close.
 async fn serve_events(
     State(app): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
-    // Subscribe BEFORE reading the file so any event appended during the
-    // backlog read is captured by the broadcast and can be deduped by seq.
+    // Subscribe before reading the file so any event appended during backlog
+    // read is captured by the broadcast and deduped by seq.
     let mut rx = app.events_tx.subscribe();
     let forum_dir = app.forum_dir.clone();
 
@@ -114,9 +103,7 @@ async fn serve_events(
             if matches!(ev.event_type, EventType::ForumComplete) {
                 completed = true;
             }
-            if let Some(sse) = event_to_sse(&ev) {
-                yield Ok(sse);
-            }
+            yield Ok(event_to_sse(&ev));
             if completed {
                 return;
             }
@@ -135,9 +122,7 @@ async fn serve_events(
                         }
                         max_seq = ev.seq;
                         let done = matches!(ev.event_type, EventType::ForumComplete);
-                        if let Some(sse) = event_to_sse(&ev) {
-                            yield Ok(sse);
-                        }
+                        yield Ok(event_to_sse(&ev));
                         if done {
                             return;
                         }
@@ -158,28 +143,24 @@ async fn serve_events(
     Sse::new(sse_stream)
 }
 
-fn event_to_sse(ev: &DashboardEvent) -> Option<SseEvent> {
-    let body = serde_json::to_string(ev).ok()?;
-    Some(
-        SseEvent::default()
-            .event("update")
-            .id(ev.seq.to_string())
-            .data(body),
-    )
+fn event_to_sse(ev: &DashboardEvent) -> SseEvent {
+    // DashboardEvent is owned data with a derived Serialize; to_string cannot fail.
+    let body = serde_json::to_string(ev).expect("DashboardEvent serialize");
+    SseEvent::default()
+        .event("update")
+        .id(ev.seq.to_string())
+        .data(body)
 }
 
-/// Read the full JSONL log. Malformed lines are skipped with a warning so a
-/// single corrupt record can't block the whole dashboard.
 fn read_full_log(forum_dir: &Path) -> Result<Vec<DashboardEvent>> {
     let path = event_log_path(forum_dir);
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let reader = BufReader::new(
-        File::open(&path).with_context(|| format!("Failed to open {}", path.display()))?,
-    );
+    let file = match File::open(&path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e).with_context(|| format!("Failed to open {}", path.display())),
+    };
     let mut events = Vec::new();
-    for (line_no, line) in reader.lines().enumerate() {
+    for (line_no, line) in BufReader::new(file).lines().enumerate() {
         let line =
             line.with_context(|| format!("Failed to read {}:{}", path.display(), line_no + 1))?;
         if line.trim().is_empty() {
@@ -187,20 +168,30 @@ fn read_full_log(forum_dir: &Path) -> Result<Vec<DashboardEvent>> {
         }
         match serde_json::from_str::<DashboardEvent>(&line) {
             Ok(ev) => events.push(ev),
-            Err(e) => eprintln!(
-                "warning: skipping malformed event at {}:{}: {}",
-                path.display(),
-                line_no + 1,
-                e
-            ),
+            Err(e) => warn_malformed(&path, Some(line_no + 1), &e),
         }
     }
     Ok(events)
 }
 
-/// Spawn the file-tailer background task. Errors inside the tailer are
-/// logged and the task exits; clients will still receive backlog via file
-/// reads, but lose live streaming. Good enough for v0.4.
+fn warn_malformed(path: &Path, line_no: Option<usize>, err: &dyn std::fmt::Display) {
+    match line_no {
+        Some(n) => eprintln!(
+            "warning: skipping malformed event at {}:{}: {}",
+            path.display(),
+            n,
+            err
+        ),
+        None => eprintln!(
+            "warning: skipping malformed event at {}: {}",
+            path.display(),
+            err
+        ),
+    }
+}
+
+/// If the tailer task errors out, clients still get backlog via file reads
+/// on connect but lose live streaming.
 fn spawn_tailer(forum_dir: PathBuf, events_tx: broadcast::Sender<DashboardEvent>) {
     tokio::spawn(async move {
         if let Err(e) = run_tailer(&forum_dir, &events_tx).await {
@@ -254,19 +245,17 @@ async fn run_tailer(forum_dir: &Path, events_tx: &broadcast::Sender<DashboardEve
             Err(e) => eprintln!("event tailer read error: {e:#}"),
         }
     }
-    drop(watcher);
     Ok(())
 }
 
 /// Read any complete lines from `path` starting at byte offset `cursor`.
-/// Returns the new cursor (start of any trailing partial line) and parsed
-/// events. Handles truncation (file shorter than cursor) by restarting at 0.
+/// On truncation (file shorter than cursor) restarts reading from 0.
 fn tail_since(path: &Path, cursor: u64) -> Result<(u64, Vec<DashboardEvent>)> {
-    if !path.exists() {
-        return Ok((cursor, Vec::new()));
-    }
-    let mut file =
-        File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
+    let mut file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((cursor, Vec::new())),
+        Err(e) => return Err(e).with_context(|| format!("Failed to open {}", path.display())),
+    };
     let len = file.metadata()?.len();
     let start = if len < cursor { 0 } else { cursor };
     file.seek(SeekFrom::Start(start))?;
@@ -292,11 +281,7 @@ fn tail_since(path: &Path, cursor: u64) -> Result<(u64, Vec<DashboardEvent>)> {
         }
         match serde_json::from_str::<DashboardEvent>(line) {
             Ok(ev) => events.push(ev),
-            Err(e) => eprintln!(
-                "warning: skipping malformed event at {}: {}",
-                path.display(),
-                e
-            ),
+            Err(e) => warn_malformed(path, None, &e),
         }
     }
     Ok((new_cursor, events))
