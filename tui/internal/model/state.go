@@ -63,7 +63,6 @@ func (s *State) Apply(e Event) error {
 	if e.Seq <= s.LatestSeq {
 		return nil
 	}
-	s.LatestSeq = e.Seq
 
 	switch e.Type {
 	case EventTypeForumStarted:
@@ -136,6 +135,9 @@ func (s *State) Apply(e Event) error {
 		// Not carried in the snapshot shape.
 	}
 
+	// Bump seq only after a successful decode so a malformed payload can
+	// be retried against the same state rather than silently consuming it.
+	s.LatestSeq = e.Seq
 	s.Updated = e.Timestamp
 	return nil
 }

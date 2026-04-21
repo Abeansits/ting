@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/fsnotify/fsnotify"
 
@@ -27,11 +28,12 @@ import (
 //
 // Malformed JSON and unknown event types are logged and skipped.
 type Tailer struct {
-	path    string
-	events  chan model.Event
-	errs    chan error
-	ready   chan struct{}
-	watcher *fsnotify.Watcher
+	path      string
+	events    chan model.Event
+	errs      chan error
+	ready     chan struct{}
+	readyOnce sync.Once
+	watcher   *fsnotify.Watcher
 }
 
 // NewTailer prepares the watcher. Call Run in a goroutine; cancel ctx to stop.
@@ -49,7 +51,7 @@ func NewTailer(path string) (*Tailer, error) {
 		return nil, fmt.Errorf("watch %s: %w", dir, err)
 	}
 	return &Tailer{
-		path:    path,
+		path:    filepath.Clean(path),
 		events:  make(chan model.Event, 64),
 		errs:    make(chan error, 8),
 		ready:   make(chan struct{}),
@@ -60,8 +62,9 @@ func NewTailer(path string) (*Tailer, error) {
 func (t *Tailer) Events() <-chan model.Event { return t.events }
 func (t *Tailer) Errors() <-chan error       { return t.errs }
 
-// Ready is closed once the initial drain completes. Tests use this to sync
-// with the tailer without time.Sleep.
+// Ready is closed once initial drain completes OR Run exits early (ctx
+// cancelled, watcher closed). "Ready" therefore means "startup settled" —
+// receivers should check Events/Errors afterward to decide the outcome.
 func (t *Tailer) Ready() <-chan struct{} { return t.ready }
 
 // Close stops the watcher. Run will exit when its events channel closes.
@@ -73,6 +76,9 @@ func (t *Tailer) Close() error { return t.watcher.Close() }
 func (t *Tailer) Run(ctx context.Context) {
 	defer close(t.events)
 	defer close(t.errs)
+	// Close ready on every exit so `<-Ready()` never hangs after an
+	// early-cancel during the initial drain.
+	defer t.signalReady()
 
 	var (
 		file *os.File
@@ -138,7 +144,7 @@ func (t *Tailer) Run(ctx context.Context) {
 	if !drain() {
 		return
 	}
-	close(t.ready)
+	t.signalReady()
 
 	for {
 		select {
@@ -148,7 +154,7 @@ func (t *Tailer) Run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if ev.Name != t.path {
+			if filepath.Clean(ev.Name) != t.path {
 				continue
 			}
 			switch {
@@ -183,4 +189,8 @@ func (t *Tailer) pushErr(ctx context.Context, err error) bool {
 	case <-ctx.Done():
 		return false
 	}
+}
+
+func (t *Tailer) signalReady() {
+	t.readyOnce.Do(func() { close(t.ready) })
 }

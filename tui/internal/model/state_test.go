@@ -92,6 +92,23 @@ func TestApply_MalformedPayloadReturnsError(t *testing.T) {
 	}
 }
 
+func TestApply_DecodeErrorDoesNotAdvanceSeq(t *testing.T) {
+	s := NewState("")
+	// Malformed payload — Apply must return err AND leave LatestSeq at 0
+	// so a retry (or snapshot-driven replay) can reach the same event.
+	_ = s.Apply(mustEvent(t, 5, EventTypeRoundStarted, `not json`))
+	if s.LatestSeq != 0 {
+		t.Errorf("LatestSeq = %d, want 0 (decode failed — seq not consumed)", s.LatestSeq)
+	}
+	// A subsequent well-formed event with the same seq should apply.
+	if err := s.Apply(mustEvent(t, 5, EventTypeRoundStarted, `{"round":1,"stage":"proposal"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if s.LatestSeq != 5 {
+		t.Errorf("LatestSeq = %d, want 5", s.LatestSeq)
+	}
+}
+
 func TestApply_ClassifierMetricsStoredRaw(t *testing.T) {
 	s := NewState("")
 	payload := `{"metrics":[{"id":"dissent_axis","name":"Dissent","scale":10,"mandatory":true}]}`
