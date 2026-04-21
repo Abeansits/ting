@@ -7,6 +7,7 @@ mod events;
 mod metric_scoring;
 mod protocol;
 mod report;
+mod server;
 mod substrate;
 mod synthesis;
 mod types;
@@ -51,10 +52,10 @@ enum Commands {
         #[arg(long)]
         output_format: Option<String>,
 
-        /// Enable the v0.4 dashboard substrate: runs the pre-round classifier
-        /// and emits events to dashboard-events.jsonl. The live server ships in
-        /// Phase 2; today this populates the artifacts those downstream
-        /// consumers will read.
+        /// Enable the v0.4 live dashboard: runs the pre-round classifier,
+        /// emits events to dashboard-events.jsonl, and starts a localhost
+        /// HTTP server (see --port) exposing the forum snapshot at
+        /// /api/state. Live streaming UI arrives in a later phase.
         #[arg(long)]
         dashboard: bool,
 
@@ -68,6 +69,11 @@ enum Commands {
         /// animated values — roughly 50% fewer Fire Keeper calls.
         #[arg(long)]
         no_metric_scoring: bool,
+
+        /// Port for the live dashboard HTTP server (only meaningful with
+        /// --dashboard). Binds 127.0.0.1 only. Default 3420.
+        #[arg(long, default_value_t = 3420)]
+        port: u16,
     },
 
     /// Check the status of a forum
@@ -192,6 +198,7 @@ fn main() -> Result<()> {
             dashboard,
             no_classifier,
             no_metric_scoring,
+            port,
         } => cmd_new(
             &topic,
             &participant,
@@ -202,6 +209,7 @@ fn main() -> Result<()> {
             dashboard,
             no_classifier,
             no_metric_scoring,
+            port,
         ),
         Commands::Status { forum_id, round } => cmd_status(&forum_id, round),
         Commands::List => cmd_list(),
@@ -227,8 +235,15 @@ fn main() -> Result<()> {
             html,
             report,
         } => cmd_eval(
-            &topic, &baseline, &forum, judge.as_deref(), context.as_deref(),
-            &timeout, max_rounds, html, report.as_deref(),
+            &topic,
+            &baseline,
+            &forum,
+            judge.as_deref(),
+            context.as_deref(),
+            &timeout,
+            max_rounds,
+            html,
+            report.as_deref(),
         ),
         Commands::Preset { action } => match action {
             PresetAction::Add { name, command } => cmd_preset_add(&name, &command),
@@ -249,6 +264,7 @@ fn cmd_new(
     dashboard: bool,
     no_classifier: bool,
     no_metric_scoring: bool,
+    port: u16,
 ) -> Result<()> {
     // Validate timeout format early
     config::parse_duration(timeout)?;
@@ -341,10 +357,7 @@ fn cmd_new(
     eprintln!();
     eprintln!("  Forum  {}", id);
     eprintln!("  Topic  {}", topic);
-    eprintln!(
-        "  With   {}",
-        forum_config.participants.names.join(", ")
-    );
+    eprintln!("  With   {}", forum_config.participants.names.join(", "));
     eprintln!("  Rules  {} rounds, {} timeout", max_rounds, timeout);
     eprintln!();
 
@@ -355,9 +368,52 @@ fn cmd_new(
         classify,
         score: classify && !no_metric_scoring,
     };
-    protocol::run_forum(&forum_config, &forum_path, &run_opts)?;
 
-    Ok(())
+    if dashboard {
+        run_with_dashboard(forum_config, forum_path, run_opts, port)
+    } else {
+        protocol::run_forum(&forum_config, &forum_path, &run_opts)
+    }
+}
+
+/// Run a forum with the live dashboard server co-scheduled.
+///
+/// `run_forum` is blocking (notify watchers, child-process invocations), so it
+/// goes on `spawn_blocking` while axum owns the tokio reactor on the main
+/// thread. When the forum finishes (success or error), the server receives
+/// the shutdown signal and returns; if axum errors first, the forum thread
+/// keeps running — the returned error takes precedence.
+fn run_with_dashboard(
+    forum_config: ForumConfig,
+    forum_path: PathBuf,
+    run_opts: protocol::RunOptions,
+    port: u16,
+) -> Result<()> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build tokio runtime")?;
+
+    let server_path = forum_path.clone();
+
+    rt.block_on(async move {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let forum_task = tokio::task::spawn_blocking(move || {
+            let result = protocol::run_forum(&forum_config, &forum_path, &run_opts);
+            let _ = shutdown_tx.send(());
+            result
+        });
+
+        server::serve(server_path, port, async move {
+            let _ = shutdown_rx.await;
+        })
+        .await?;
+
+        forum_task
+            .await
+            .map_err(|e| anyhow::anyhow!("forum task panicked: {e}"))?
+    })
 }
 
 fn cmd_status(forum_id: &str, round: Option<u32>) -> Result<()> {
@@ -383,7 +439,10 @@ fn cmd_status(forum_id: &str, round: Option<u32>) -> Result<()> {
         if completed {
             "completed".to_string()
         } else {
-            format!("in progress (round {} of {})", current, cfg.forum.max_rounds)
+            format!(
+                "in progress (round {} of {})",
+                current, cfg.forum.max_rounds
+            )
         }
     );
     println!();
@@ -663,8 +722,8 @@ fn cmd_respond(
             // No file: open $EDITOR with a draft, then atomic-write to response path
             let editor = find_editor();
 
-            let draft_path = std::env::temp_dir()
-                .join(format!("ting-respond-{}.md", uuid::Uuid::new_v4()));
+            let draft_path =
+                std::env::temp_dir().join(format!("ting-respond-{}.md", uuid::Uuid::new_v4()));
 
             // Seed draft with existing content if user is re-editing
             if response_path.exists() {
@@ -798,18 +857,20 @@ fn cmd_eval(
     };
 
     // Resolve context
-    let context_text = match context {
-        Some(c) => {
-            let path = std::path::Path::new(c);
-            if path.exists() {
-                Some(std::fs::read_to_string(path)
-                    .with_context(|| format!("Failed to read context file: {}", path.display()))?)
-            } else {
-                Some(c.to_string())
+    let context_text =
+        match context {
+            Some(c) => {
+                let path = std::path::Path::new(c);
+                if path.exists() {
+                    Some(std::fs::read_to_string(path).with_context(|| {
+                        format!("Failed to read context file: {}", path.display())
+                    })?)
+                } else {
+                    Some(c.to_string())
+                }
             }
-        }
-        None => None,
-    };
+            None => None,
+        };
 
     print_banner();
     eprintln!();
@@ -861,7 +922,10 @@ fn cmd_preset_list() -> Result<()> {
         };
         println!("{:<14} {:<9} {}", name, tag, cmd_display);
     }
-    println!("{:<14} {:<9} {}", "human", "built-in", "(manual — writes files directly)");
+    println!(
+        "{:<14} {:<9} {}",
+        "human", "built-in", "(manual — writes files directly)"
+    );
     Ok(())
 }
 
