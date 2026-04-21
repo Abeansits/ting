@@ -28,9 +28,9 @@
     },
     "metrics": {
       "type": "array",
-      "minItems": 5,
+      "minItems": 6,
       "maxItems": 11,
-      "description": "5-10 question-specific metrics plus the mandatory dissent axis (so 6-11 items total).",
+      "description": "5-10 question-specific metrics plus the mandatory dissent axis (6-11 items total). Exactly one metric must have id 'dissent_axis' and 'mandatory: true'.",
       "items": { "$ref": "#/$defs/ClassifierMetric" }
     }
   },

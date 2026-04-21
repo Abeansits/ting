@@ -119,6 +119,32 @@ pub fn append_event(forum_dir: &Path, event: &DashboardEvent) -> Result<()> {
     Ok(())
 }
 
+/// True if the log contains at least one event of the given type. Used by
+/// resume paths to check idempotency ("did the fresh run manage to emit the
+/// event before it crashed?") without re-appending duplicates. Malformed
+/// lines are skipped; an IO error on open propagates.
+pub fn log_contains(forum_dir: &Path, event_type: EventType) -> Result<bool> {
+    let path = event_log_path(forum_dir);
+    if !path.exists() {
+        return Ok(false);
+    }
+    let file = File::open(&path)
+        .with_context(|| format!("Failed to open event log: {}", path.display()))?;
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        let line = line.with_context(|| format!("Failed to read event log: {}", path.display()))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(evt) = serde_json::from_str::<DashboardEvent>(&line) {
+            if evt.event_type == event_type {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Return the next sequence number to assign: `max(seq) + 1`, or `1` if the log
 /// is empty or missing.
 ///
@@ -381,5 +407,29 @@ mod tests {
         .unwrap();
 
         assert_eq!(next_seq(&dir).unwrap(), 3);
+    }
+
+    #[test]
+    fn log_contains_finds_present_and_rejects_missing() {
+        let dir = tmp_dir("log-contains");
+        assert!(!log_contains(&dir, EventType::ClassifierMetrics).unwrap());
+        append_event(
+            &dir,
+            &DashboardEvent::new(1, "fid", EventType::RoundStarted, json!({})),
+        )
+        .unwrap();
+        assert!(log_contains(&dir, EventType::RoundStarted).unwrap());
+        assert!(!log_contains(&dir, EventType::ClassifierMetrics).unwrap());
+        append_event(
+            &dir,
+            &DashboardEvent::new(
+                2,
+                "fid",
+                EventType::ClassifierMetrics,
+                json!({ "metrics": [] }),
+            ),
+        )
+        .unwrap();
+        assert!(log_contains(&dir, EventType::ClassifierMetrics).unwrap());
     }
 }

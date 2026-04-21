@@ -306,6 +306,18 @@ where
     F: FnOnce(&str) -> Result<String>,
 {
     if let Some(existing) = read_metrics(forum_dir)? {
+        // Re-verify invariants: the single-writer rule applies to Ting itself,
+        // but an operator poking at `metrics.json` between runs should still
+        // get a clear failure instead of a silent contract break later.
+        validate_metrics(&existing.metrics)
+            .with_context(|| "Existing metrics.json failed validation")?;
+        // Belt-and-suspenders for partial-failure: a prior run could have
+        // landed the file but crashed before appending the event. In that
+        // case the canonical JSONL would be permanently missing the
+        // classifier_metrics entry. Backfill on resume.
+        if !events::log_contains(forum_dir, EventType::ClassifierMetrics)? {
+            emit_classifier_event(forum_dir, &existing)?;
+        }
         return Ok((existing, ClassifierOutcome::Resumed));
     }
 
@@ -649,16 +661,17 @@ mod tests {
     }
 
     #[test]
-    fn ensure_resume_reads_disk_and_does_not_invoke_llm() {
-        let dir = tmp_dir("ensure-resume");
-        // Seed the directory with a prior run's metrics.json.
+    fn ensure_resume_is_idempotent_when_event_already_logged() {
+        // Fully-consistent prior run: metrics.json AND the classifier_metrics
+        // event exist. Resume must not re-append or re-invoke the LLM.
+        let dir = tmp_dir("ensure-resume-idempotent");
         let seeded = sample_file();
         write_metrics(&dir, &seeded).unwrap();
+        emit_classifier_event(&dir, &seeded).unwrap();
 
         let invoke = |_: &str| -> Result<String> {
             panic!("Classifier should not invoke LLM on resume");
         };
-
         let (file, outcome) = ensure_classifier(
             &dir,
             &seeded.forum_id,
@@ -672,8 +685,66 @@ mod tests {
         assert_eq!(outcome, ClassifierOutcome::Resumed);
         assert_eq!(file, seeded);
 
-        // No event appended on resume — event came from the fresh run previously.
+        // Exactly one classifier_metrics event in the log — no duplicate.
+        let log = fs::read_to_string(events::event_log_path(&dir)).unwrap();
+        assert_eq!(log.lines().count(), 1);
+    }
+
+    #[test]
+    fn ensure_resume_backfills_missing_event() {
+        // Partial-failure scenario: metrics.json written but event append
+        // crashed. Resume must emit the missing event without calling the LLM.
+        let dir = tmp_dir("ensure-resume-backfill");
+        let seeded = sample_file();
+        write_metrics(&dir, &seeded).unwrap();
         assert!(!events::event_log_path(&dir).exists());
+
+        let invoke = |_: &str| -> Result<String> {
+            panic!("Classifier should not invoke LLM on resume");
+        };
+        let (_, outcome) = ensure_classifier(
+            &dir,
+            &seeded.forum_id,
+            "Is the sky falling?",
+            None,
+            "claude-opus-4-6",
+            invoke,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, ClassifierOutcome::Resumed);
+        let log = fs::read_to_string(events::event_log_path(&dir)).unwrap();
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(lines.len(), 1);
+        let event: DashboardEvent = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(event.event_type, EventType::ClassifierMetrics);
+        assert_eq!(event.seq, 1);
+    }
+
+    #[test]
+    fn ensure_resume_rejects_tampered_file() {
+        // An operator edited metrics.json into an invalid state between runs
+        // (e.g. removed the dissent axis). Resume must fail loudly, not
+        // silently proceed with a contract break.
+        let dir = tmp_dir("ensure-resume-tampered");
+        let mut seeded = sample_file();
+        seeded.metrics.retain(|m| m.id != DISSENT_AXIS_ID);
+        // Bypass write_metrics's validation-through-serde by writing bytes
+        // directly.
+        fs::create_dir_all(substrate::round_dir(&dir, ROUND_0_INDEX)).unwrap();
+        let body = serde_json::to_vec_pretty(&seeded).unwrap();
+        fs::write(metrics_path(&dir), body).unwrap();
+
+        let invoke = |_: &str| -> Result<String> {
+            panic!("Classifier should not invoke LLM on resume");
+        };
+        let err = ensure_classifier(&dir, &seeded.forum_id, "topic", None, "model", invoke)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("validation") || err.contains("dissent_axis"),
+            "got: {err}"
+        );
     }
 
     #[test]
