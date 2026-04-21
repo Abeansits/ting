@@ -2,7 +2,6 @@
   "use strict";
 
   const GAUGE_ARC_LENGTH = Math.PI * 80;
-  const DISSENT_METRIC_ID = "dissent_axis";
 
   const state = {
     forumId: null,
@@ -10,13 +9,9 @@
     participants: [],
     maxRounds: 0,
     status: "pending",
-    latestSeq: 0,
     rounds: new Map(),         // round -> { round, stage, responded: Set, synthesisWords, scoresByMetric: Map }
     metrics: [],               // [{ id, name, scale, description, mandatory }]
-    latestScores: new Map(),   // metric_id -> number
     convergenceHistory: [],    // [{ round, score }]
-    convergenceLatest: null,
-    latestSynthesis: null,     // { round, wordCount }
     selectedRound: null,
   };
 
@@ -50,6 +45,7 @@
         scoresByMetric: new Map(),
       };
       state.rounds.set(round, r);
+      if (state.selectedRound === null) state.selectedRound = round;
     } else if (stage) {
       r.stage = stage;
     }
@@ -62,9 +58,9 @@
     state.participants = snapshot.participants || [];
     state.maxRounds = snapshot.max_rounds || 0;
     state.status = snapshot.status || "pending";
-    state.latestSeq = snapshot.latest_seq || 0;
 
     state.rounds.clear();
+    state.convergenceHistory = [];
     for (const r of snapshot.rounds || []) {
       const entry = ensureRound(r.round, r.stage);
       for (const p of r.participants_responded || []) entry.responded.add(p);
@@ -74,7 +70,6 @@
       if (r.metric_scores && Array.isArray(r.metric_scores.scores)) {
         for (const s of r.metric_scores.scores) {
           entry.scoresByMetric.set(s.metric_id, s.score);
-          state.latestScores.set(s.metric_id, s.score);
         }
       }
       if (typeof r.convergence_score === "number") {
@@ -85,25 +80,10 @@
     if (snapshot.classifier_metrics && Array.isArray(snapshot.classifier_metrics.metrics)) {
       state.metrics = snapshot.classifier_metrics.metrics;
     }
-    if (typeof snapshot.convergence_score === "number") {
-      state.convergenceLatest = snapshot.convergence_score;
-    }
-
-    // Latest synthesis + selected round default to the highest round we know about.
-    const highest = maxRoundNumber();
-    if (highest !== null) {
-      state.selectedRound = highest;
-      const entry = state.rounds.get(highest);
-      if (entry && entry.synthesisWords !== null) {
-        state.latestSynthesis = { round: highest, wordCount: entry.synthesisWords };
-      }
-    }
+    state.selectedRound = maxRoundNumber();
   }
 
   function applyEvent(ev) {
-    if (typeof ev.seq === "number" && ev.seq > state.latestSeq) {
-      state.latestSeq = ev.seq;
-    }
     const p = ev.payload || {};
     switch (ev.type) {
       case "forum_started":
@@ -114,8 +94,7 @@
         state.status = "in_progress";
         break;
       case "round_started": {
-        const r = ensureRound(p.round, p.stage);
-        r.stage = p.stage || r.stage;
+        ensureRound(p.round, p.stage);
         state.selectedRound = p.round;
         state.status = "in_progress";
         break;
@@ -128,7 +107,6 @@
       case "synthesis": {
         const r = ensureRound(p.round);
         if (typeof p.word_count === "number") r.synthesisWords = p.word_count;
-        state.latestSynthesis = { round: p.round, wordCount: p.word_count ?? null };
         break;
       }
       case "classifier_metrics":
@@ -138,25 +116,20 @@
         const r = ensureRound(p.round);
         for (const s of p.scores || []) {
           r.scoresByMetric.set(s.metric_id, s.score);
-          state.latestScores.set(s.metric_id, s.score);
         }
         break;
       }
       case "convergence":
         if (typeof p.score === "number") {
-          state.convergenceLatest = p.score;
           state.convergenceHistory.push({ round: p.round, score: p.score });
         }
         break;
       case "forum_complete":
         state.status = "completed";
         break;
-      case "claims":
-      case "alignment":
-        // Rendered implicitly via participant/synthesis events; no separate UI yet.
-        break;
       default:
-        // Unknown type — ignore so older clients don't break on newer event kinds.
+        // claims / alignment are reflected via participant_response + synthesis.
+        // Any unknown type is ignored so older clients don't break.
         break;
     }
   }
@@ -171,6 +144,24 @@
 
   function sortedRounds() {
     return Array.from(state.rounds.values()).sort((a, b) => a.round - b.round);
+  }
+
+  function latestScores() {
+    const rounds = sortedRounds();
+    for (let i = rounds.length - 1; i >= 0; i--) {
+      if (rounds[i].scoresByMetric.size > 0) return rounds[i].scoresByMetric;
+    }
+    return null;
+  }
+
+  function latestSynthesis() {
+    const rounds = sortedRounds();
+    for (let i = rounds.length - 1; i >= 0; i--) {
+      if (rounds[i].synthesisWords !== null) {
+        return { round: rounds[i].round, wordCount: rounds[i].synthesisWords };
+      }
+    }
+    return null;
   }
 
   /* ---------- rendering ---------- */
@@ -190,7 +181,7 @@
     el.forumStatus.textContent = state.status.replace("_", " ");
     el.forumStatus.dataset.status = state.status;
     const current = maxRoundNumber() ?? 0;
-    el.currentRound.textContent = `${current} / ${state.maxRounds || "?"}`;
+    el.currentRound.textContent = `${current} / ${state.maxRounds || "?"}`;
   }
 
   function renderTopic() {
@@ -262,16 +253,17 @@
       el.metrics.replaceChildren(hint("Metrics appear after the pre-round classifier runs."));
       return;
     }
-    // Dissent Axis first, then scale-asc, then alphabetical — stable and puts dissent up top.
+    // Mandatory metrics (Dissent Axis per plan-v2) first, then alphabetical.
     const sorted = [...state.metrics].sort((a, b) => {
-      if (a.id === DISSENT_METRIC_ID) return -1;
-      if (b.id === DISSENT_METRIC_ID) return 1;
+      if (a.mandatory && !b.mandatory) return -1;
+      if (b.mandatory && !a.mandatory) return 1;
       return a.name.localeCompare(b.name);
     });
+    const scores = latestScores();
     el.metrics.replaceChildren(...sorted.map(m => {
       const row = document.createElement("div");
       row.className = "metric";
-      if (m.id === DISSENT_METRIC_ID || m.mandatory) row.classList.add("dissent");
+      if (m.mandatory) row.classList.add("dissent");
 
       const labelWrap = document.createElement("div");
       const label = document.createElement("span");
@@ -293,7 +285,7 @@
 
       const scoreEl = document.createElement("span");
       scoreEl.className = "metric-score";
-      const score = state.latestScores.get(m.id);
+      const score = scores ? scores.get(m.id) : undefined;
       if (typeof score === "number") {
         const scale = m.scale || 10;
         const pct = Math.max(0, Math.min(100, (score / scale) * 100));
@@ -310,7 +302,8 @@
   }
 
   function renderGauge() {
-    const score = state.convergenceLatest;
+    const history = state.convergenceHistory;
+    const score = history.length ? history[history.length - 1].score : null;
     if (typeof score === "number") {
       const offset = GAUGE_ARC_LENGTH * (1 - Math.max(0, Math.min(10, score)) / 10);
       el.gaugeFill.style.strokeDashoffset = offset.toFixed(2);
@@ -322,11 +315,7 @@
       el.gaugeValue.textContent = "—";
     }
 
-    if (state.convergenceHistory.length === 0) {
-      el.convergenceHistory.replaceChildren();
-      return;
-    }
-    el.convergenceHistory.replaceChildren(...state.convergenceHistory.map(h => {
+    el.convergenceHistory.replaceChildren(...history.map(h => {
       const chip = document.createElement("span");
       chip.className = "history-chip";
       chip.textContent = `R${h.round} · ${h.score.toFixed(1)}`;
@@ -341,7 +330,7 @@
       el.responseBody.replaceChildren(hint("Rounds appear here once the forum starts."));
       return;
     }
-    const selected = state.selectedRound ?? rounds[rounds.length - 1].round;
+    const selected = state.selectedRound;
     el.responseTabs.replaceChildren(...rounds.map(r => {
       const tab = document.createElement("button");
       tab.type = "button";
@@ -380,7 +369,7 @@
   }
 
   function renderSynthesis() {
-    const latest = state.latestSynthesis;
+    const latest = latestSynthesis();
     if (!latest) {
       el.synthesisInfo.classList.remove("has-synthesis");
       el.synthesisInfo.replaceChildren(hint("No synthesis yet."));
@@ -414,7 +403,7 @@
       live: "live",
       ended: "stream ended",
       error: "connection error",
-    }[stateLabel] || stateLabel;
+    }[stateLabel];
   }
 
   function connect() {
@@ -423,8 +412,7 @@
 
     es.addEventListener("init", ev => {
       try {
-        const snapshot = JSON.parse(ev.data);
-        applyState(snapshot);
+        applyState(JSON.parse(ev.data));
         render();
         setConnection("live");
       } catch (err) {
@@ -450,8 +438,8 @@
     es.addEventListener("ping", () => { /* keep-alive only */ });
 
     es.onerror = () => {
-      // EventSource auto-reconnects; surface the blip and let it retry.
-      // If forum is already completed, treat as a clean close.
+      // If the forum already completed, the close is expected; otherwise
+      // EventSource auto-reconnects — surface the blip and let it retry.
       if (state.status === "completed") {
         setConnection("ended");
         es.close();
@@ -463,18 +451,6 @@
     es.onopen = () => setConnection("live");
   }
 
-  // Seed the UI from the snapshot before SSE lands so a completed-forum page
-  // paints immediately even if the event stream is slow to arrive.
-  fetch("/api/state", { cache: "no-store" })
-    .then(r => (r.ok ? r.json() : null))
-    .then(snapshot => {
-      if (snapshot) {
-        applyState(snapshot);
-        render();
-      } else {
-        render();
-      }
-    })
-    .catch(() => render())
-    .finally(connect);
+  render();
+  connect();
 })();

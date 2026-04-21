@@ -70,22 +70,17 @@ async fn serve_dashboard() -> Html<&'static str> {
 }
 
 async fn serve_css() -> impl IntoResponse {
-    (
-        [(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("text/css; charset=utf-8"),
-        )],
-        DASHBOARD_CSS,
-    )
+    static_asset("text/css; charset=utf-8", DASHBOARD_CSS)
 }
 
 async fn serve_js() -> impl IntoResponse {
+    static_asset("text/javascript; charset=utf-8", DASHBOARD_JS)
+}
+
+fn static_asset(content_type: &'static str, body: &'static str) -> impl IntoResponse {
     (
-        [(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("text/javascript; charset=utf-8"),
-        )],
-        DASHBOARD_JS,
+        [(header::CONTENT_TYPE, HeaderValue::from_static(content_type))],
+        body,
     )
 }
 
@@ -399,6 +394,14 @@ mod tests {
         }
     }
 
+    fn content_type(resp: &axum::response::Response) -> String {
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string()
+    }
+
     #[tokio::test]
     async fn get_root_returns_html_shell() {
         let dir = tmp_dir("root");
@@ -407,16 +410,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let ct = resp
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_default();
+        let ct = content_type(&resp);
         assert!(ct.starts_with("text/html"), "content-type was {ct}");
         let body = String::from_utf8(body_bytes(resp).await).unwrap();
         assert!(body.contains("Ting Dashboard"));
         assert!(body.contains("/api/state"));
-        // Phase 2C contract: every dashboard section the JS renders into.
         for id in [
             "forum-id",
             "topic",
@@ -444,11 +442,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let ct = resp
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_default();
+        let ct = content_type(&resp);
         assert!(ct.starts_with("text/css"), "content-type was {ct}");
         let body = String::from_utf8(body_bytes(resp).await).unwrap();
         assert!(body.contains("--bg"), "expected CSS vars in body");
@@ -466,17 +460,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let ct = resp
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_default();
+        let ct = content_type(&resp);
         assert!(
             ct.starts_with("text/javascript") || ct.starts_with("application/javascript"),
             "content-type was {ct}"
         );
         let body = String::from_utf8(body_bytes(resp).await).unwrap();
-        // Contract: JS handles every event type the server may broadcast.
+        // Every event type the server may broadcast must have a JS handler.
         for needle in [
             "EventSource",
             "forum_started",

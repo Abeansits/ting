@@ -26,7 +26,7 @@
   <div class="participants" id="participants"></div>
 </section>
 
-<section class="panel" id="rounds-section">
+<section class="panel">
   <div class="panel-head">
     <h2>Rounds</h2>
     <span class="panel-sub">Participant progress and synthesis per round.</span>
@@ -36,7 +36,7 @@
   </div>
 </section>
 
-<section class="panel" id="metrics-section">
+<section class="panel">
   <div class="panel-head">
     <h2>Classifier Metrics</h2>
     <span class="panel-sub">Fire-Keeper-picked axes, scored per round. Dissent Axis is always shown.</span>
@@ -46,7 +46,7 @@
   </div>
 </section>
 
-<section class="panel" id="convergence-section">
+<section class="panel">
   <div class="panel-head">
     <h2>Convergence</h2>
     <span class="panel-sub">Latest judge score. 10 = unanimous.</span>
@@ -62,18 +62,18 @@
   </div>
 </section>
 
-<section class="panel" id="responses-section">
+<section class="panel">
   <div class="panel-head">
     <h2>Responses</h2>
     <span class="panel-sub">Per-participant status for the selected round.</span>
   </div>
   <div class="response-tabs" id="response-tabs"></div>
-  <div class="response-body" id="response-body">
+  <div id="response-body">
     <p class="hint">Rounds appear here once the forum starts.</p>
   </div>
 </section>
 
-<section class="panel" id="synthesis-section">
+<section class="panel">
   <div class="panel-head">
     <h2>Latest Synthesis</h2>
     <span class="panel-sub">Fire Keeper's distilled summary of the latest round.</span>
@@ -85,7 +85,7 @@
 
 <footer>
   <span class="connection" id="connection" data-state="connecting">connecting…</span>
-  <span class="footer-right">Live feed <code>/api/events</code> &middot; Snapshot <code>/api/state</code></span>
+  <span>Live feed <code>/api/events</code> &middot; Snapshot <code>/api/state</code></span>
 </footer>
 
 </div>
