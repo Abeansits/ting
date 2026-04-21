@@ -1,0 +1,4 @@
+{"version":1,"seq":1,"forum_id":"ting-2026-04-19-abcd1234","timestamp":"2026-04-19T13:55:00Z","type":"forum_started","payload":{"topic":"Is the sky falling?","participants":["codex","gemini","claude"],"max_rounds":3}}
+{"version":1,"seq":2,"forum_id":"ting-2026-04-19-abcd1234","timestamp":"2026-04-19T13:55:10Z","type":"classifier_metrics","payload":{"metrics":[{"id":"feasibility","name":"Feasibility","scale":10},{"id":"dissent_axis","name":"Dissent","scale":10,"mandatory":true}]}}
+{"version":1,"seq":3,"forum_id":"ting-2026-04-19-abcd1234","timestamp":"2026-04-19T13:55:30Z","type":"round_started","payload":{"round":1,"stage":"proposal"}}
+{"version":1,"seq":4,"forum_id":"ting-2026-04-19-abcd1234","timestamp":"2026-04-19T13:58:02Z","type":"participant_response","payload":{"round":1,"participant":"codex","word_count":412}}

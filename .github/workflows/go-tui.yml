@@ -1,0 +1,34 @@
+name: Go TUI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tui
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+        cache-dependency-path: tui/go.sum
+    - name: Verify gofmt
+      run: |
+        out=$(gofmt -l .)
+        if [ -n "$out" ]; then
+          echo "gofmt would rewrite these files:"
+          echo "$out"
+          exit 1
+        fi
+    - name: Vet
+      run: go vet ./...
+    - name: Build
+      run: go build ./...
+    - name: Test
+      run: go test -race -count=1 ./...

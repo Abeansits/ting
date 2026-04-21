@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "forum_id": "ting-2026-04-19-abcd1234",
+  "topic": "Is the sky falling?",
+  "participants": ["codex", "gemini", "claude"],
+  "max_rounds": 3,
+  "created": "2026-04-19T13:55:00Z",
+  "updated": "2026-04-19T13:58:02Z",
+  "latest_seq": 4,
+  "status": "in_progress",
+  "rounds": [
+    {
+      "round": 1,
+      "stage": "proposal",
+      "participants_responded": ["codex", "gemini"]
+    }
+  ],
+  "classifier_metrics": {
+    "metrics": [
+      { "id": "feasibility", "name": "Feasibility", "scale": 10 },
+      { "id": "dissent_axis", "name": "Dissent", "scale": 10, "mandatory": true }
+    ]
+  }
+}
