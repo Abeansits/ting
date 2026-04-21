@@ -58,21 +58,23 @@ fn internal_error<E: std::fmt::Display>(e: E) -> ApiError {
     error_body(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }
 
-/// Bind a loopback server for `forum_dir` and serve until `shutdown` resolves.
-/// Prints the bound URL on stderr so the caller doesn't need to know the final
-/// port (useful when `port == 0` and the OS picks one).
+/// Bind a loopback `TcpListener` for the dashboard. Split from `serve` so the
+/// caller can verify the bind before committing to long-running work
+/// (e.g. spawning the blocking forum task) — avoids orphaning that work if the
+/// server fails to start.
+pub async fn bind_loopback(port: u16) -> Result<TcpListener> {
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("Failed to bind {addr}"))
+}
+
+/// Serve the dashboard on an already-bound listener until `shutdown` resolves.
 pub async fn serve(
+    listener: TcpListener,
     forum_dir: PathBuf,
-    port: u16,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let listener = TcpListener::bind(addr)
-        .await
-        .with_context(|| format!("Failed to bind {addr}"))?;
-    let bound = listener.local_addr().context("Failed to read bound address")?;
-    eprintln!("  Dashboard  http://{bound}");
-
     axum::serve(listener, router(forum_dir))
         .with_graceful_shutdown(shutdown)
         .await
@@ -167,8 +169,9 @@ mod tests {
     #[tokio::test]
     async fn serve_shuts_down_on_signal() {
         let dir = tmp_dir("shutdown");
+        let listener = bind_loopback(0).await.unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let handle = tokio::spawn(serve(dir, 0, async move {
+        let handle = tokio::spawn(serve(listener, dir, async move {
             let _ = rx.await;
         }));
 

@@ -378,11 +378,11 @@ fn cmd_new(
 
 /// Run a forum with the live dashboard server co-scheduled.
 ///
-/// `run_forum` is blocking (notify watchers, child-process invocations), so it
-/// goes on `spawn_blocking` while axum owns the tokio reactor on the main
-/// thread. When the forum finishes (success or error), the server receives
-/// the shutdown signal and returns; if axum errors first, the forum thread
-/// keeps running — the returned error takes precedence.
+/// Order matters for structured concurrency: we bind the listener *before*
+/// spawning the blocking `run_forum` work. If the bind fails we exit without
+/// ever starting a forum we can't cleanly cancel. Once both are running we
+/// always join the forum task before returning, so a mid-flight server error
+/// can't orphan it.
 fn run_with_dashboard(
     forum_config: ForumConfig,
     forum_path: PathBuf,
@@ -397,6 +397,12 @@ fn run_with_dashboard(
     let server_path = forum_path.clone();
 
     rt.block_on(async move {
+        let listener = server::bind_loopback(port).await?;
+        let bound = listener
+            .local_addr()
+            .context("Failed to read bound address")?;
+        eprintln!("  Dashboard  http://{bound}");
+
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
         let forum_task = tokio::task::spawn_blocking(move || {
@@ -405,14 +411,28 @@ fn run_with_dashboard(
             result
         });
 
-        server::serve(server_path, port, async move {
+        let serve_result = server::serve(listener, server_path, async move {
             let _ = shutdown_rx.await;
         })
-        .await?;
+        .await;
 
-        forum_task
+        let forum_result = forum_task
             .await
-            .map_err(|e| anyhow::anyhow!("forum task panicked: {e}"))?
+            .map_err(|e| anyhow::anyhow!("forum task panicked: {e}"))
+            .and_then(|r| r);
+
+        // Forum is the primary work — its error wins. A server error is only
+        // returned on its own; if both fail, log the server failure and
+        // surface the forum error.
+        match (forum_result, serve_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Err(e)) => Err(e),
+            (Err(e), Ok(())) => Err(e),
+            (Err(forum_err), Err(serve_err)) => {
+                eprintln!("  Dashboard server error: {serve_err:#}");
+                Err(forum_err)
+            }
+        }
     })
 }
 
