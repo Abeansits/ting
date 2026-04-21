@@ -1,41 +1,95 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ting Dashboard</title>
-<style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    margin: 0;
-    padding: 2.5rem;
-    color: #2b2b2b;
-    background: #fafafa;
-    line-height: 1.5;
-  }
-  h1 { margin: 0 0 1rem; font-weight: 600; letter-spacing: -0.01em; }
-  .shell {
-    max-width: 48rem;
-    border: 1px dashed #cfcfcf;
-    border-radius: 8px;
-    padding: 1.5rem 1.75rem;
-    background: #fff;
-  }
-  code {
-    background: #f0f0f0;
-    padding: 1px 5px;
-    border-radius: 3px;
-    font-size: 0.92em;
-  }
-  .muted { color: #777; font-size: 0.92rem; margin-top: 1.25rem; }
-  a { color: #2a5fd6; }
-</style>
+<link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
-  <h1>Ting Dashboard</h1>
-  <div class="shell">
-    <p>Server skeleton (Phase 2A). The live UI lands in Phase 2C.</p>
-    <p>Current forum snapshot: <a href="/api/state"><code>GET /api/state</code></a></p>
-    <p class="muted">No stream yet — the JSONL tailer and SSE bridge arrive in Phase 2B.</p>
+<div class="container">
+
+<header>
+  <div class="logo">TING</div>
+  <div class="meta-row">
+    <span class="meta-label">Forum</span>
+    <span class="meta-value mono" id="forum-id">—</span>
+    <span class="meta-label">Status</span>
+    <span class="status-pill" id="forum-status" data-status="pending">pending</span>
+    <span class="meta-label">Round</span>
+    <span class="meta-value mono" id="current-round">0&#8202;/&#8202;0</span>
   </div>
+</header>
+
+<section class="topic-section">
+  <h1 id="topic">Waiting for forum…</h1>
+  <div class="participants" id="participants"></div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Rounds</h2>
+    <span class="panel-sub">Participant progress and synthesis per round.</span>
+  </div>
+  <div class="rounds-grid" id="rounds-grid">
+    <p class="hint">Rounds populate as the forum runs.</p>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Classifier Metrics</h2>
+    <span class="panel-sub">Fire-Keeper-picked axes, scored per round. Dissent Axis is always shown.</span>
+  </div>
+  <div class="metrics" id="metrics">
+    <p class="hint">Metrics appear after the pre-round classifier runs.</p>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Convergence</h2>
+    <span class="panel-sub">Latest judge score. 10 = unanimous.</span>
+  </div>
+  <div class="convergence">
+    <svg class="gauge" viewBox="-100 -100 200 110" aria-label="Convergence gauge">
+      <path class="gauge-track" d="M -80 0 A 80 80 0 0 1 80 0"/>
+      <path id="gauge-fill" class="gauge-fill" d="M -80 0 A 80 80 0 0 1 80 0"/>
+      <text id="gauge-value" class="gauge-value" x="0" y="-16" text-anchor="middle">—</text>
+      <text class="gauge-scale" x="0" y="14" text-anchor="middle">/ 10</text>
+    </svg>
+    <div class="convergence-history" id="convergence-history"></div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Responses</h2>
+    <span class="panel-sub">Per-participant status for the selected round.</span>
+  </div>
+  <div class="response-tabs" id="response-tabs"></div>
+  <div id="response-body">
+    <p class="hint">Rounds appear here once the forum starts.</p>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Latest Synthesis</h2>
+    <span class="panel-sub">Fire Keeper's distilled summary of the latest round.</span>
+  </div>
+  <div id="synthesis-info" class="synthesis-info">
+    <p class="hint">No synthesis yet.</p>
+  </div>
+</section>
+
+<footer>
+  <span class="connection" id="connection" data-state="connecting">connecting…</span>
+  <span>Live feed <code>/api/events</code> &middot; Snapshot <code>/api/state</code></span>
+</footer>
+
+</div>
+
+<script src="/static/dashboard.js"></script>
 </body>
 </html>
