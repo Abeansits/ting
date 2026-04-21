@@ -4,6 +4,7 @@ mod convergence;
 mod dashboard_state;
 mod eval;
 mod events;
+mod metric_scoring;
 mod protocol;
 mod report;
 mod substrate;
@@ -61,6 +62,12 @@ enum Commands {
         /// Useful when you want lifecycle events without the extra LLM call.
         #[arg(long)]
         no_classifier: bool,
+
+        /// Skip the per-round metric scoring pass (only meaningful with
+        /// --dashboard). Dashboard then shows static metric labels with no
+        /// animated values — roughly 50% fewer Fire Keeper calls.
+        #[arg(long)]
+        no_metric_scoring: bool,
     },
 
     /// Check the status of a forum
@@ -184,6 +191,7 @@ fn main() -> Result<()> {
             output_format,
             dashboard,
             no_classifier,
+            no_metric_scoring,
         } => cmd_new(
             &topic,
             &participant,
@@ -193,6 +201,7 @@ fn main() -> Result<()> {
             output_format.as_deref(),
             dashboard,
             no_classifier,
+            no_metric_scoring,
         ),
         Commands::Status { forum_id, round } => cmd_status(&forum_id, round),
         Commands::List => cmd_list(),
@@ -218,8 +227,15 @@ fn main() -> Result<()> {
             html,
             report,
         } => cmd_eval(
-            &topic, &baseline, &forum, judge.as_deref(), context.as_deref(),
-            &timeout, max_rounds, html, report.as_deref(),
+            &topic,
+            &baseline,
+            &forum,
+            judge.as_deref(),
+            context.as_deref(),
+            &timeout,
+            max_rounds,
+            html,
+            report.as_deref(),
         ),
         Commands::Preset { action } => match action {
             PresetAction::Add { name, command } => cmd_preset_add(&name, &command),
@@ -239,6 +255,7 @@ fn cmd_new(
     output_format: Option<&str>,
     dashboard: bool,
     no_classifier: bool,
+    no_metric_scoring: bool,
 ) -> Result<()> {
     // Validate timeout format early
     config::parse_duration(timeout)?;
@@ -331,18 +348,18 @@ fn cmd_new(
     eprintln!();
     eprintln!("  Forum  {}", id);
     eprintln!("  Topic  {}", topic);
-    eprintln!(
-        "  With   {}",
-        forum_config.participants.names.join(", ")
-    );
+    eprintln!("  With   {}", forum_config.participants.names.join(", "));
     eprintln!("  Rules  {} rounds, {} timeout", max_rounds, timeout);
     eprintln!();
 
     // Plan-v2 entanglement: classifier runs iff --dashboard is on and
-    // --no-classifier is not set. Without --dashboard we stay bit-for-bit
-    // compatible with v0.3 behavior.
+    // --no-classifier is not set. Per-round scoring further requires
+    // classifier output and is skipped when --no-metric-scoring is set.
+    // Without --dashboard we stay bit-for-bit compatible with v0.3 behavior.
+    let classify = dashboard && !no_classifier;
     let run_opts = protocol::RunOptions {
-        classify: dashboard && !no_classifier,
+        classify,
+        score: classify && !no_metric_scoring,
     };
     protocol::run_forum(&forum_config, &forum_path, &run_opts)?;
 
@@ -372,7 +389,10 @@ fn cmd_status(forum_id: &str, round: Option<u32>) -> Result<()> {
         if completed {
             "completed".to_string()
         } else {
-            format!("in progress (round {} of {})", current, cfg.forum.max_rounds)
+            format!(
+                "in progress (round {} of {})",
+                current, cfg.forum.max_rounds
+            )
         }
     );
     println!();
@@ -652,8 +672,8 @@ fn cmd_respond(
             // No file: open $EDITOR with a draft, then atomic-write to response path
             let editor = find_editor();
 
-            let draft_path = std::env::temp_dir()
-                .join(format!("ting-respond-{}.md", uuid::Uuid::new_v4()));
+            let draft_path =
+                std::env::temp_dir().join(format!("ting-respond-{}.md", uuid::Uuid::new_v4()));
 
             // Seed draft with existing content if user is re-editing
             if response_path.exists() {
@@ -787,18 +807,20 @@ fn cmd_eval(
     };
 
     // Resolve context
-    let context_text = match context {
-        Some(c) => {
-            let path = std::path::Path::new(c);
-            if path.exists() {
-                Some(std::fs::read_to_string(path)
-                    .with_context(|| format!("Failed to read context file: {}", path.display()))?)
-            } else {
-                Some(c.to_string())
+    let context_text =
+        match context {
+            Some(c) => {
+                let path = std::path::Path::new(c);
+                if path.exists() {
+                    Some(std::fs::read_to_string(path).with_context(|| {
+                        format!("Failed to read context file: {}", path.display())
+                    })?)
+                } else {
+                    Some(c.to_string())
+                }
             }
-        }
-        None => None,
-    };
+            None => None,
+        };
 
     print_banner();
     eprintln!();
@@ -850,7 +872,10 @@ fn cmd_preset_list() -> Result<()> {
         };
         println!("{:<14} {:<9} {}", name, tag, cmd_display);
     }
-    println!("{:<14} {:<9} {}", "human", "built-in", "(manual — writes files directly)");
+    println!(
+        "{:<14} {:<9} {}",
+        "human", "built-in", "(manual — writes files directly)"
+    );
     Ok(())
 }
 

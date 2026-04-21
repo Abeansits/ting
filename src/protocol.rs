@@ -1,4 +1,4 @@
-use crate::{classifier, config, convergence, substrate, synthesis, types::*};
+use crate::{classifier, config, convergence, metric_scoring, substrate, synthesis, types::*};
 use anyhow::Result;
 use rand::seq::SliceRandom;
 use std::collections::HashMap;
@@ -11,25 +11,27 @@ pub struct RunOptions {
     /// When true, run the pre-round classifier before round 1. Controlled by
     /// `--dashboard` minus `--no-classifier` at the CLI layer.
     pub classify: bool,
+    /// When true, run per-round metric scoring after each round's content is
+    /// written. Requires `classify` — scoring has no metrics to score without
+    /// the classifier. Controlled by `--dashboard` minus `--no-metric-scoring`.
+    pub score: bool,
 }
 
 /// Run a complete forum deliberation through the modified Delphi protocol.
 /// Supports auto-extend: if convergence score < 5 at max_rounds, runs one extra round
 /// to avoid premature termination while capping sycophancy from over-deliberation.
-pub fn run_forum(
-    forum_config: &ForumConfig,
-    forum_path: &Path,
-    opts: &RunOptions,
-) -> Result<()> {
+pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOptions) -> Result<()> {
     let mut prior_rounds: Vec<RoundData> = Vec::new();
     let review_mode = is_review_mode(forum_config);
 
     // Warn if judge model family overlaps with participants
     warn_judge_overlap(forum_config);
 
-    if opts.classify {
-        run_classifier(forum_config, forum_path)?;
-    }
+    let classifier_metrics = if opts.classify {
+        Some(run_classifier(forum_config, forum_path)?)
+    } else {
+        None
+    };
     let mut effective_max = forum_config.forum.max_rounds;
     let mut auto_extended = false;
     let mut last_convergence: Option<ConvergenceResult> = None;
@@ -71,9 +73,7 @@ pub fn run_forum(
 
         // Generate synthesis
         eprintln!("  Generating synthesis...");
-        let prior_synth = prior_rounds
-            .last()
-            .and_then(|r| r.synthesis.as_deref());
+        let prior_synth = prior_rounds.last().and_then(|r| r.synthesis.as_deref());
         let synth = synthesis::generate_synthesis(
             &forum_config.synthesis,
             &forum_config.forum.topic,
@@ -103,24 +103,36 @@ pub fn run_forum(
         };
         prior_rounds.push(round_data);
 
+        // Per-round metric scoring (dashboard substrate). Requires classifier
+        // output; the CLI layer guarantees `opts.score` implies `opts.classify`,
+        // but guard on the Option anyway so a future caller can't break it.
+        if opts.score {
+            if let Some(ref metrics_file) = classifier_metrics {
+                let last = prior_rounds.last().expect("just pushed");
+                run_scoring(
+                    forum_config,
+                    forum_path,
+                    metrics_file,
+                    round_num,
+                    &last.responses,
+                    last.synthesis.as_deref(),
+                )?;
+            }
+        }
+
         // Score per-participant alignment for position shift tracking (every round)
         if let Some(ref synth) = prior_rounds.last().and_then(|r| r.synthesis.clone()) {
             eprintln!("  Scoring alignment...");
-            if let Ok(alignment) = convergence::evaluate_alignment(
-                &forum_config.convergence,
-                &synth,
-                &responses,
-            ) {
+            if let Ok(alignment) =
+                convergence::evaluate_alignment(&forum_config.convergence, &synth, &responses)
+            {
                 let alignment_toml: String = alignment
                     .iter()
                     .map(|(k, v)| format!("{} = {:.1}", k, v))
                     .collect::<Vec<_>>()
                     .join("\n");
                 let content = format!("[alignment]\nround = {}\n{}\n", round_num, alignment_toml);
-                substrate::write_atomic_toml(
-                    &round_dir.join("alignment.toml"),
-                    &content,
-                )?;
+                substrate::write_atomic_toml(&round_dir.join("alignment.toml"), &content)?;
             }
         }
 
@@ -256,10 +268,7 @@ fn invoke_participants(
         for name in &command_participants {
             let tx = tx.clone();
             let name = name.clone();
-            let cmd_template = config.participants.configs[&name]
-                .command
-                .clone()
-                .unwrap();
+            let cmd_template = config.participants.configs[&name].command.clone().unwrap();
             let prompt = prompt.to_string();
             let round_dir = round_dir.clone();
             let timeout = participant_timeout;
@@ -267,10 +276,8 @@ fn invoke_participants(
             std::thread::spawn(move || {
                 let result = substrate::invoke_command(&cmd_template, &prompt, timeout);
                 if let Ok(ref response) = result {
-                    let _ = substrate::write_atomic(
-                        &round_dir.join(format!("{}.md", name)),
-                        response,
-                    );
+                    let _ =
+                        substrate::write_atomic(&round_dir.join(format!("{}.md", name)), response);
                 }
                 tx.send((name, result)).ok();
             });
@@ -301,7 +308,10 @@ fn invoke_participants(
             eprintln!("  \u{23f3} Waiting for YOU ({})", name);
         }
         eprintln!();
-        eprintln!("    Read others' responses:  ting status {} --round {}", forum_id, round);
+        eprintln!(
+            "    Read others' responses:  ting status {} --round {}",
+            forum_id, round
+        );
         eprintln!("    Write your response:     ting respond {}", forum_id);
         for name in &manual_participants {
             eprintln!(
@@ -371,10 +381,7 @@ fn generate_proposal_prompt(config: &ForumConfig) -> String {
     )
 }
 
-fn generate_crossexam_prompt(
-    config: &ForumConfig,
-    prior_rounds: &[RoundData],
-) -> Result<String> {
+fn generate_crossexam_prompt(config: &ForumConfig, prior_rounds: &[RoundData]) -> Result<String> {
     let round1 = prior_rounds
         .last()
         .ok_or_else(|| anyhow::anyhow!("No prior round data for cross-examination"))?;
@@ -420,15 +427,16 @@ fn generate_crossexam_prompt(
     Ok(prompt)
 }
 
-fn generate_revision_prompt(
-    config: &ForumConfig,
-    prior_rounds: &[RoundData],
-) -> Result<String> {
+fn generate_revision_prompt(config: &ForumConfig, prior_rounds: &[RoundData]) -> Result<String> {
     let last = prior_rounds
         .last()
         .ok_or_else(|| anyhow::anyhow!("No prior round data for revision"))?;
 
-    let mut prompt = format!("# Forum Topic\n\n{}{}\n\n", config.forum.topic, context_section(config));
+    let mut prompt = format!(
+        "# Forum Topic\n\n{}{}\n\n",
+        config.forum.topic,
+        context_section(config)
+    );
 
     if let Some(ref synth) = last.synthesis {
         prompt.push_str(&format!("## Previous Round Synthesis\n{}\n\n", synth));
@@ -479,10 +487,7 @@ fn assign_cross_exam(participants: &[String]) -> Vec<(String, String)> {
 
 /// Check for hollow consensus: high convergence score but contested claims in claims.toml.
 /// Returns a warning string if detected.
-fn detect_hollow_consensus(
-    result: &ConvergenceResult,
-    rounds: &[RoundData],
-) -> Option<String> {
+fn detect_hollow_consensus(result: &ConvergenceResult, rounds: &[RoundData]) -> Option<String> {
     let score = match result {
         ConvergenceResult::Converged { score, .. } => *score,
         _ => return None, // only check when judge says "converged"
@@ -595,12 +600,24 @@ fn write_final_output(
 
 /// Extract model family from a model ID or preset name (e.g., "claude-opus-4-6" → "claude")
 fn model_family(id: &str) -> &str {
-    if id.starts_with("claude") { return "claude"; }
-    if id.starts_with("gpt") || id.contains("codex") { return "openai"; }
-    if id.starts_with("gemini") { return "gemini"; }
-    if id.starts_with("kimi") || id.contains("opencode") { return "moonshot"; }
-    if id.starts_with("llama") || id.starts_with("deepseek") { return "meta/open"; }
-    if id.starts_with("glm") { return "zhipu"; }
+    if id.starts_with("claude") {
+        return "claude";
+    }
+    if id.starts_with("gpt") || id.contains("codex") {
+        return "openai";
+    }
+    if id.starts_with("gemini") {
+        return "gemini";
+    }
+    if id.starts_with("kimi") || id.contains("opencode") {
+        return "moonshot";
+    }
+    if id.starts_with("llama") || id.starts_with("deepseek") {
+        return "meta/open";
+    }
+    if id.starts_with("glm") {
+        return "zhipu";
+    }
     id.split('-').next().unwrap_or(id)
 }
 
@@ -631,8 +648,12 @@ fn warn_judge_overlap(config: &ForumConfig) {
 /// Drive the pre-round classifier: pick topic-specific metrics plus the
 /// mandatory dissent axis, write `round-0/metrics.json`, emit a
 /// `classifier_metrics` event. Skips cleanly on resume if `metrics.json`
-/// already exists.
-fn run_classifier(forum_config: &ForumConfig, forum_path: &Path) -> Result<()> {
+/// already exists. Returns the metrics file so downstream scoring can reuse
+/// the definitions without re-reading disk.
+fn run_classifier(
+    forum_config: &ForumConfig,
+    forum_path: &Path,
+) -> Result<classifier::ClassifierMetricsFile> {
     let synth = &forum_config.synthesis;
     let model = config::resolve_model(&synth.model).to_string();
     let custom_command = synth.command.clone();
@@ -665,6 +686,51 @@ fn run_classifier(forum_config: &ForumConfig, forum_path: &Path) -> Result<()> {
         verb,
         file.metrics.len(),
     );
+    Ok(file)
+}
+
+/// Score the just-completed round's metrics (Fire Keeper, one batched call).
+/// Writes `round-N/metric-scores.json`, emits a `metric_scores` event, and
+/// short-circuits on resume if the file already exists.
+fn run_scoring(
+    forum_config: &ForumConfig,
+    forum_path: &Path,
+    metrics_file: &classifier::ClassifierMetricsFile,
+    round: u32,
+    responses: &HashMap<String, String>,
+    synthesis_text: Option<&str>,
+) -> Result<()> {
+    let synth = &forum_config.synthesis;
+    let model = config::resolve_model(&synth.model).to_string();
+    let custom_command = synth.command.clone();
+
+    let invoke = |prompt: &str| -> Result<String> {
+        substrate::invoke_fire_keeper_model(
+            custom_command.as_deref(),
+            &model,
+            prompt,
+            synthesis::FIRE_KEEPER_TIMEOUT,
+        )
+    };
+
+    eprintln!("  Scoring metrics for round {}...", round);
+    let (_, outcome) = metric_scoring::ensure_scores(
+        forum_path,
+        &forum_config.forum.id,
+        &forum_config.forum.topic,
+        round,
+        metrics_file,
+        responses,
+        synthesis_text,
+        &model,
+        invoke,
+    )?;
+
+    let verb = match outcome {
+        metric_scoring::ScoringOutcome::Fresh => "scored",
+        metric_scoring::ScoringOutcome::Resumed => "reused",
+    };
+    eprintln!("  \u{2713} Metrics {} for round {}", verb, round);
     Ok(())
 }
 
