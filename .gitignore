@@ -1,3 +1,7 @@
 /target
 .letta/
 .DS_Store
+
+# Go TUI build artefacts
+/tui/ting-tui
+/tui/*.test
