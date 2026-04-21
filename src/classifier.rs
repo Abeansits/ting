@@ -1,30 +1,28 @@
 //! Pre-round "Fire Keeper" classifier.
 //!
 //! Runs once per forum, before round 1, when `--dashboard` is on and
-//! `--no-classifier` is not set. The classifier reads the forum topic and
-//! supplementary context and asks the Fire Keeper model for 5-10 topic-specific
-//! metrics *plus* one mandatory `dissent_axis` metric (see `plan-v2.md` delta
-//! #5). The result lands on disk as `round-0/metrics.json` and as a
-//! `classifier_metrics` event on `dashboard-events.jsonl` (the Phase 1A
-//! contract).
+//! `--no-classifier` is not set. Asks the Fire Keeper model for 5-10
+//! topic-specific metrics plus one mandatory `dissent_axis`. The result lands
+//! on disk as `round-0/metrics.json` and as a `classifier_metrics` event on
+//! `dashboard-events.jsonl`.
 //!
-//! Resume semantics: if `round-0/metrics.json` already exists we short-circuit —
-//! no LLM call, no duplicate event. The disk artifact is the source of truth;
-//! the event was appended on the fresh run.
+//! Resume semantics: if `round-0/metrics.json` already exists we short-circuit
+//! — no LLM call, no duplicate event. The disk artifact is the source of
+//! truth; the event was appended on the fresh run.
 //!
-//! The public surface is deliberately small:
-//! - `build_classifier_prompt` and `parse_classifier_response` are pure.
-//! - `ensure_classifier` is the single integration point for `protocol.rs`;
-//!   it takes an `invoke` closure so tests can stub the LLM without touching
-//!   `substrate::invoke_fire_keeper_model`.
+//! `ensure_classifier` is the single integration point for `protocol.rs`. It
+//! takes an `invoke` closure so tests can stub the LLM without touching
+//! `substrate::invoke_fire_keeper_model`.
 #![allow(dead_code)]
 
 use crate::events::{self, DashboardEvent, EventType};
-use anyhow::{Context, Result, bail};
+use crate::substrate;
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use std::fs::{self, OpenOptions};
+use serde_json::Value;
+use std::collections::HashSet;
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -32,20 +30,24 @@ use std::path::{Path, PathBuf};
 /// to the top-level file shape; additive metric fields do not bump this.
 pub const METRICS_VERSION: u32 = 1;
 
-/// Filename under the forum directory.
 pub const METRICS_FILENAME: &str = "metrics.json";
 
-/// Subdirectory the classifier writes into (parallel to `round-1`, `round-2`, …).
-pub const ROUND_0_DIRNAME: &str = "round-0";
+/// Classifier output lives alongside the round directories but is scored over
+/// the forum as a whole, so it gets a pseudo-round 0.
+pub const ROUND_0_INDEX: u32 = 0;
 
-/// Required id of the mandatory dissent axis metric. Hardcoded so consumers
-/// and the parser agree on one canonical key.
+/// Required id of the mandatory dissent axis metric. Hardcoded so the prompt,
+/// the validator, and every downstream consumer agree on one canonical key.
 pub const DISSENT_AXIS_ID: &str = "dissent_axis";
 
-/// Plan-v2 budget: 5-10 question-specific metrics. The dissent axis is added
-/// on top, so the total on disk is 6-11 entries.
+/// 5-10 question-specific metrics plus the dissent axis (6-11 entries total).
 pub const MIN_TOPIC_METRICS: usize = 5;
 pub const MAX_TOPIC_METRICS: usize = 10;
+
+/// Upper bound we accept for any metric's `scale`. Matches the prompt and the
+/// committed JSON Schema, and is tight enough for the dashboard to render as
+/// a discrete bar without rescaling.
+pub const MAX_SCALE: u32 = 10;
 
 /// A single axis the dashboard can render for this forum.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,14 +71,21 @@ pub struct ClassifierMetricsFile {
     pub metrics: Vec<ClassifierMetric>,
 }
 
-/// Path to `<forum_dir>/round-0/metrics.json`.
-pub fn metrics_path(forum_dir: &Path) -> PathBuf {
-    forum_dir.join(ROUND_0_DIRNAME).join(METRICS_FILENAME)
+/// Shape the LLM emits — a `{ "metrics": [...] }` wrapper around the array.
+/// Exposed as a separate type so `parse_classifier_response` can deserialize
+/// straight into it instead of going through `serde_json::Value`.
+#[derive(Debug, Deserialize)]
+struct ClassifierResponse {
+    metrics: Vec<ClassifierMetric>,
 }
 
-/// Build the classifier prompt. The dissent-axis instruction is mandatory and
-/// baked in; the parser enforces it, but the prompt itself makes it a
-/// first-class requirement so the LLM doesn't have to infer it from schema.
+pub fn metrics_path(forum_dir: &Path) -> PathBuf {
+    substrate::round_dir(forum_dir, ROUND_0_INDEX).join(METRICS_FILENAME)
+}
+
+/// Build the classifier prompt. The dissent-axis requirement is baked in —
+/// the parser enforces it, but the prompt states it explicitly so the LLM
+/// doesn't have to infer it from schema.
 pub fn build_classifier_prompt(topic: &str, context: Option<&str>) -> String {
     let mut prompt = String::new();
     prompt.push_str(
@@ -103,7 +112,7 @@ pub fn build_classifier_prompt(topic: &str, context: Option<&str>) -> String {
          differ. Each metric needs:\n\n\
          - `id`: snake_case identifier, unique within the set, [a-z0-9_] only.\n\
          - `name`: short human label (Title Case).\n\
-         - `scale`: integer 2-10, the upper bound of the score range (1..=scale).\n\
+         - `scale`: integer 2-10 (upper bound of the score range, 1..=scale).\n\
          - `description`: one sentence explaining what the metric captures.\n\n\
          ## Mandatory Dissent Axis\n\n\
          In addition to the 5-10 topic metrics you choose, include exactly one \
@@ -120,26 +129,16 @@ pub fn build_classifier_prompt(topic: &str, context: Option<&str>) -> String {
     prompt
 }
 
-/// Parse a classifier response into a validated metrics vector.
-///
-/// Tolerates ` ```json … ``` ` code fences around the JSON. Enforces:
-/// - 5-10 topic metrics plus exactly one mandatory dissent axis.
-/// - `dissent_axis` id present and marked `mandatory: true`.
-/// - No duplicate ids.
-/// - Scale in `2..=100`.
+/// Parse a classifier response into a validated metrics vector. Tolerates
+/// ` ```json … ``` ` code fences. Enforces one `dissent_axis`
+/// (`mandatory: true`) plus 5-10 topic metrics, unique snake_case ids, and
+/// scale in `2..=MAX_SCALE`.
 pub fn parse_classifier_response(raw: &str) -> Result<Vec<ClassifierMetric>> {
     let cleaned = strip_code_fences(raw.trim());
-    let parsed: Value =
-        serde_json::from_str(cleaned).with_context(|| "Classifier response was not valid JSON")?;
-
-    let metrics_value = parsed
-        .get("metrics")
-        .ok_or_else(|| anyhow::anyhow!("Classifier response missing `metrics` array"))?;
-    let metrics: Vec<ClassifierMetric> = serde_json::from_value(metrics_value.clone())
-        .with_context(|| "Failed to parse `metrics` array")?;
-
-    validate_metrics(&metrics)?;
-    Ok(metrics)
+    let response: ClassifierResponse = serde_json::from_str(cleaned)
+        .with_context(|| "Classifier response was not valid JSON with a `metrics` array")?;
+    validate_metrics(&response.metrics)?;
+    Ok(response.metrics)
 }
 
 fn strip_code_fences(s: &str) -> &str {
@@ -177,7 +176,7 @@ fn validate_metrics(metrics: &[ClassifierMetric]) -> Result<()> {
         );
     }
 
-    let mut seen_ids = std::collections::HashSet::new();
+    let mut seen_ids: HashSet<&str> = HashSet::with_capacity(metrics.len());
     for m in metrics {
         if m.id.is_empty() {
             bail!("Classifier metric has empty id");
@@ -189,14 +188,19 @@ fn validate_metrics(metrics: &[ClassifierMetric]) -> Result<()> {
         {
             bail!("Metric id `{}` must be snake_case [a-z0-9_]", m.id);
         }
-        if !seen_ids.insert(m.id.clone()) {
+        if !seen_ids.insert(&m.id) {
             bail!("Classifier emitted duplicate metric id `{}`", m.id);
         }
         if m.name.trim().is_empty() {
             bail!("Metric `{}` has empty name", m.id);
         }
-        if !(2..=100).contains(&m.scale) {
-            bail!("Metric `{}` has scale {}, expected 2..=100", m.id, m.scale);
+        if !(2..=MAX_SCALE).contains(&m.scale) {
+            bail!(
+                "Metric `{}` has scale {}, expected 2..={}",
+                m.id,
+                m.scale,
+                MAX_SCALE,
+            );
         }
         if m.id == DISSENT_AXIS_ID && m.mandatory != Some(true) {
             bail!("`{}` must have `mandatory: true`", DISSENT_AXIS_ID);
@@ -206,12 +210,12 @@ fn validate_metrics(metrics: &[ClassifierMetric]) -> Result<()> {
     Ok(())
 }
 
-/// Write `metrics.json` atomically under `<forum_dir>/round-0/`.
+/// Write `metrics.json` atomically under `<forum_dir>/round-0/`. Uses the same
+/// `.tmp` + rename + fsync dance as `dashboard_state::write_state` so readers
+/// never observe a torn file and the snapshot survives a power loss.
 pub fn write_metrics(forum_dir: &Path, file: &ClassifierMetricsFile) -> Result<()> {
-    let dir = forum_dir.join(ROUND_0_DIRNAME);
-    fs::create_dir_all(&dir).with_context(|| format!("Failed to create {}", dir.display()))?;
-
-    let final_path = metrics_path(forum_dir);
+    let dir = substrate::create_round_dir(forum_dir, ROUND_0_INDEX)?;
+    let final_path = dir.join(METRICS_FILENAME);
     let tmp_path = final_path.with_extension("json.tmp");
 
     let mut body = serde_json::to_vec_pretty(file)
@@ -240,10 +244,15 @@ pub fn write_metrics(forum_dir: &Path, file: &ClassifierMetricsFile) -> Result<(
             final_path.display()
         )
     })?;
+
+    // fsync the containing directory so the rename itself is durable.
+    // Best-effort on platforms where directory fsync is a no-op.
+    if let Ok(dir_file) = File::open(&dir) {
+        let _ = dir_file.sync_all();
+    }
     Ok(())
 }
 
-/// Read `round-0/metrics.json`, or `Ok(None)` if it does not exist.
 pub fn read_metrics(forum_dir: &Path) -> Result<Option<ClassifierMetricsFile>> {
     let path = metrics_path(forum_dir);
     if !path.exists() {
@@ -256,13 +265,11 @@ pub fn read_metrics(forum_dir: &Path) -> Result<Option<ClassifierMetricsFile>> {
     Ok(Some(file))
 }
 
-/// Build the `ClassifierMetricsPayload` shape for an event.
-pub fn classifier_metrics_payload(metrics: &[ClassifierMetric]) -> Value {
-    json!({ "metrics": metrics })
+fn classifier_metrics_payload(metrics: &[ClassifierMetric]) -> Value {
+    serde_json::json!({ "metrics": metrics })
 }
 
-/// Append a `classifier_metrics` event to the forum's JSONL log.
-pub fn emit_classifier_event(forum_dir: &Path, file: &ClassifierMetricsFile) -> Result<()> {
+fn emit_classifier_event(forum_dir: &Path, file: &ClassifierMetricsFile) -> Result<()> {
     let seq = events::next_seq(forum_dir)?;
     let payload = classifier_metrics_payload(&file.metrics);
     let event = DashboardEvent::new(
@@ -282,16 +289,11 @@ pub enum ClassifierOutcome {
     Resumed,
 }
 
-/// Core integration entry point.
-///
 /// If `metrics.json` already exists, reads it and returns `Resumed` — no LLM
 /// call, no duplicate event. Otherwise invokes `invoke` with the classifier
 /// prompt, parses the response, writes `metrics.json`, appends the
-/// `classifier_metrics` event, and returns `Fresh`.
-///
-/// The `invoke` closure is injected so tests and future integration points
-/// (e.g. a different fire-keeper transport) don't have to wire through
-/// `substrate::invoke_fire_keeper_model` directly.
+/// `classifier_metrics` event, and returns `Fresh`. The closure is injected so
+/// tests can stub the LLM.
 pub fn ensure_classifier<F>(
     forum_dir: &Path,
     forum_id: &str,
@@ -327,6 +329,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::cell::Cell;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -391,11 +394,9 @@ mod tests {
     fn parse_well_formed_response() {
         let metrics = parse_classifier_response(&sample_llm_response()).unwrap();
         assert_eq!(metrics.len(), 6);
-        assert!(
-            metrics
-                .iter()
-                .any(|m| m.id == "dissent_axis" && m.mandatory == Some(true))
-        );
+        assert!(metrics
+            .iter()
+            .any(|m| m.id == "dissent_axis" && m.mandatory == Some(true)));
     }
 
     #[test]

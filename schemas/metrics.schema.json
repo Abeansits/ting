@@ -54,7 +54,8 @@
         "scale": {
           "type": "integer",
           "minimum": 2,
-          "maximum": 100
+          "maximum": 10,
+          "description": "Upper bound of the score range; scores are integers 1..=scale. Tight cap keeps the dashboard bar-chart renderable without rescaling."
         },
         "description": {
           "type": "string"

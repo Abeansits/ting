@@ -3,19 +3,15 @@ use anyhow::Result;
 use rand::seq::SliceRandom;
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::Duration;
 
-/// Runtime flags that shape a single `run_forum` invocation. They are not
-/// persisted to `meta.toml` — resume semantics come from on-disk artifacts.
+/// Runtime flags that shape a single `run_forum` invocation. Not persisted to
+/// `meta.toml` — resume semantics come from on-disk artifacts.
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
-    /// When true, run the Phase 1B pre-round classifier before round 1.
-    /// Controlled by `--dashboard` minus `--no-classifier` at the CLI layer.
+    /// When true, run the pre-round classifier before round 1. Controlled by
+    /// `--dashboard` minus `--no-classifier` at the CLI layer.
     pub classify: bool,
 }
-
-/// Timeout for the one-shot classifier LLM call. Mirrors the synthesis budget.
-const CLASSIFIER_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Run a complete forum deliberation through the modified Delphi protocol.
 /// Supports auto-extend: if convergence score < 5 at max_rounds, runs one extra round
@@ -632,8 +628,8 @@ fn warn_judge_overlap(config: &ForumConfig) {
     }
 }
 
-/// Run the Phase 1B pre-round classifier: picks topic-specific metrics plus
-/// the mandatory dissent axis, writes `round-0/metrics.json`, and emits a
+/// Drive the pre-round classifier: pick topic-specific metrics plus the
+/// mandatory dissent axis, write `round-0/metrics.json`, emit a
 /// `classifier_metrics` event. Skips cleanly on resume if `metrics.json`
 /// already exists.
 fn run_classifier(forum_config: &ForumConfig, forum_path: &Path) -> Result<()> {
@@ -646,7 +642,7 @@ fn run_classifier(forum_config: &ForumConfig, forum_path: &Path) -> Result<()> {
             custom_command.as_deref(),
             &model,
             prompt,
-            CLASSIFIER_TIMEOUT,
+            synthesis::FIRE_KEEPER_TIMEOUT,
         )
     };
 
@@ -660,16 +656,15 @@ fn run_classifier(forum_config: &ForumConfig, forum_path: &Path) -> Result<()> {
         invoke,
     )?;
 
-    match outcome {
-        classifier::ClassifierOutcome::Fresh => eprintln!(
-            "  \u{2713} Classifier picked {} metrics (incl. dissent axis)",
-            file.metrics.len(),
-        ),
-        classifier::ClassifierOutcome::Resumed => eprintln!(
-            "  \u{2713} Reusing existing round-0/metrics.json ({} metrics)",
-            file.metrics.len(),
-        ),
-    }
+    let verb = match outcome {
+        classifier::ClassifierOutcome::Fresh => "picked",
+        classifier::ClassifierOutcome::Resumed => "reused",
+    };
+    eprintln!(
+        "  \u{2713} Classifier {} {} metrics (incl. dissent axis)",
+        verb,
+        file.metrics.len(),
+    );
     Ok(())
 }
 

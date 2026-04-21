@@ -22,8 +22,12 @@ pub fn create_forum_dir(id: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
+pub fn round_dir(forum: &Path, round: u32) -> PathBuf {
+    forum.join(format!("round-{}", round))
+}
+
 pub fn create_round_dir(forum: &Path, round: u32) -> Result<PathBuf> {
-    let dir = forum.join(format!("round-{}", round));
+    let dir = round_dir(forum, round);
     fs::create_dir_all(&dir)
         .with_context(|| format!("Failed to create round directory: {}", dir.display()))?;
     Ok(dir)
