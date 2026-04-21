@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ting.dev/schemas/dashboard-event.schema.json",
+  "title": "DashboardEvent",
+  "description": "Envelope for a single line of dashboard-events.jsonl. Payload shape is determined by the type field; see $defs for per-type payload schemas.",
+  "type": "object",
+  "required": ["version", "seq", "forum_id", "timestamp", "type", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Envelope schema version. v0.4 Phase 1A ships version=1."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic per-forum sequence number starting at 1. Authoritative ordering for consumers — `timestamp` is informational only. Encoded as an unsigned 64-bit integer; JavaScript consumers tailing the JSONL directly should note that values above 2^53-1 will lose precision (not a concern in practice for a single forum, but documented as an accepted risk)."
+    },
+    "forum_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The forum this event belongs to (e.g. 'ting-2026-04-19-abcd1234')."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 / ISO8601 UTC timestamp of when the event was emitted. Informational only; consumers MUST use `seq` for ordering."
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "forum_started",
+        "round_started",
+        "participant_response",
+        "synthesis",
+        "claims",
+        "alignment",
+        "classifier_metrics",
+        "metric_scores",
+        "convergence",
+        "forum_complete"
+      ]
+    },
+    "payload": {
+      "description": "Event-type-specific payload. See $defs for per-type shapes; unknown fields are allowed so producers can grow the payload without breaking strict consumers.",
+      "type": "object"
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "type": { "const": "forum_started" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/ForumStartedPayload" } } } },
+    { "if": { "properties": { "type": { "const": "round_started" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/RoundStartedPayload" } } } },
+    { "if": { "properties": { "type": { "const": "participant_response" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/ParticipantResponsePayload" } } } },
+    { "if": { "properties": { "type": { "const": "synthesis" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/SynthesisPayload" } } } },
+    { "if": { "properties": { "type": { "const": "claims" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/ClaimsPayload" } } } },
+    { "if": { "properties": { "type": { "const": "alignment" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/AlignmentPayload" } } } },
+    { "if": { "properties": { "type": { "const": "classifier_metrics" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/ClassifierMetricsPayload" } } } },
+    { "if": { "properties": { "type": { "const": "metric_scores" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/MetricScoresPayload" } } } },
+    { "if": { "properties": { "type": { "const": "convergence" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/ConvergencePayload" } } } },
+    { "if": { "properties": { "type": { "const": "forum_complete" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/ForumCompletePayload" } } } }
+  ],
+  "$defs": {
+    "ForumStartedPayload": {
+      "type": "object",
+      "required": ["topic", "participants", "max_rounds"],
+      "properties": {
+        "topic": { "type": "string" },
+        "participants": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "max_rounds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "RoundStartedPayload": {
+      "type": "object",
+      "required": ["round", "stage"],
+      "properties": {
+        "round": { "type": "integer", "minimum": 1 },
+        "stage": { "type": "string" }
+      }
+    },
+    "ParticipantResponsePayload": {
+      "type": "object",
+      "required": ["round", "participant"],
+      "properties": {
+        "round": { "type": "integer", "minimum": 1 },
+        "participant": { "type": "string" },
+        "word_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "SynthesisPayload": {
+      "type": "object",
+      "required": ["round"],
+      "properties": {
+        "round": { "type": "integer", "minimum": 1 },
+        "word_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ClaimsPayload": {
+      "type": "object",
+      "required": ["round", "claims"],
+      "properties": {
+        "round": { "type": "integer", "minimum": 1 },
+        "claims": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "text"],
+            "properties": {
+              "id": { "type": "string" },
+              "text": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "AlignmentPayload": {
+      "type": "object",
+      "required": ["round"],
+      "properties": {
+        "round": { "type": "integer", "minimum": 1 },
+        "alignment": {
+          "type": "object",
+          "description": "Map of participant -> stance (agree/disagree/abstain/…)",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "ClassifierMetricsPayload": {
+      "type": "object",
+      "required": ["metrics"],
+      "properties": {
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "scale"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "scale": { "type": "integer", "minimum": 2 },
+              "description": { "type": "string" },
+              "mandatory": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "MetricScoresPayload": {
+      "type": "object",
+      "required": ["round", "scores"],
+      "properties": {
+        "round": { "type": "integer", "minimum": 1 },
+        "scores": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["metric_id", "score"],
+            "properties": {
+              "metric_id": { "type": "string" },
+              "score": { "type": "number" },
+              "rationale": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "ConvergencePayload": {
+      "type": "object",
+      "required": ["round", "score"],
+      "properties": {
+        "round": { "type": "integer", "minimum": 1 },
+        "score": { "type": "number" }
+      }
+    },
+    "ForumCompletePayload": {
+      "type": "object",
+      "required": ["rounds_used"],
+      "properties": {
+        "rounds_used": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}
