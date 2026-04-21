@@ -16,9 +16,9 @@ const (
 	StatusCompleted  Status = "completed"
 )
 
-// RoundSummary mirrors the snapshot's per-round shape. Payloads whose full
-// structure the snapshot doesn't type are kept as RawMessage so the view
-// layer can reach into them without the reducer needing to know every field.
+// RoundSummary mirrors the snapshot's per-round shape. Loosely-typed payload
+// fields are stored as RawMessage so the view layer can decode what it needs
+// without forcing the reducer to mirror every payload field.
 type RoundSummary struct {
 	Round                 uint32          `json:"round"`
 	Stage                 string          `json:"stage"`
@@ -28,8 +28,7 @@ type RoundSummary struct {
 	ConvergenceScore      *float64        `json:"convergence_score,omitempty"`
 }
 
-// State mirrors dashboard-state.json. Loaded once at startup for the initial
-// frame; subsequent events mutate it in place via Apply.
+// State mirrors dashboard-state.json.
 type State struct {
 	Version           uint32          `json:"version"`
 	ForumID           string          `json:"forum_id"`
@@ -45,9 +44,7 @@ type State struct {
 	ConvergenceScore  *float64        `json:"convergence_score,omitempty"`
 }
 
-// NewState returns an empty state matching the shape the Rust writer produces
-// for a freshly-created forum. Useful for tests and for the edge case where
-// the snapshot file doesn't exist yet.
+// NewState returns an empty state for the case where no snapshot exists yet.
 func NewState(forumID string) *State {
 	return &State{
 		Version:      StateVersion,
@@ -59,9 +56,9 @@ func NewState(forumID string) *State {
 }
 
 // Apply folds one event into the state. Events with seq <= LatestSeq are
-// ignored (idempotency — the snapshot may already include them). Returns an
-// error only on malformed payload JSON; unknown event types are a no-op so
-// the reducer keeps pace with producer evolution (see CONTRACT.md).
+// skipped: the snapshot the tailer starts from may already include them, and
+// idempotency lets us replay without double-counting. Unknown event types are
+// a no-op per schemas/CONTRACT.md.
 func (s *State) Apply(e Event) error {
 	if e.Seq <= s.LatestSeq {
 		return nil
@@ -111,7 +108,7 @@ func (s *State) Apply(e Event) error {
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
 			return payloadErr(e.Type, err)
 		}
-		s.ensureRound(p.Round).Synthesis = copyRaw(e.Payload)
+		s.ensureRound(p.Round).Synthesis = e.Payload
 	case EventTypeMetricScores:
 		var p struct {
 			Round uint32 `json:"round"`
@@ -119,7 +116,7 @@ func (s *State) Apply(e Event) error {
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
 			return payloadErr(e.Type, err)
 		}
-		s.ensureRound(p.Round).MetricScores = copyRaw(e.Payload)
+		s.ensureRound(p.Round).MetricScores = e.Payload
 	case EventTypeConvergence:
 		var p struct {
 			Round uint32  `json:"round"`
@@ -132,12 +129,11 @@ func (s *State) Apply(e Event) error {
 		s.ensureRound(p.Round).ConvergenceScore = &score
 		s.ConvergenceScore = &score
 	case EventTypeClassifierMetrics:
-		s.ClassifierMetrics = copyRaw(e.Payload)
+		s.ClassifierMetrics = e.Payload
 	case EventTypeForumComplete:
 		s.Status = StatusCompleted
 	case EventTypeClaims, EventTypeAlignment:
-		// Present in the event schema but not carried in the snapshot shape.
-		// 3A deliberately skips; 3B's view layer will decide whether to track.
+		// Not carried in the snapshot shape.
 	}
 
 	s.Updated = e.Timestamp
@@ -155,12 +151,6 @@ func (s *State) ensureRound(round uint32) *RoundSummary {
 		ParticipantsResponded: []string{},
 	})
 	return &s.Rounds[len(s.Rounds)-1]
-}
-
-func copyRaw(b json.RawMessage) json.RawMessage {
-	out := make(json.RawMessage, len(b))
-	copy(out, b)
-	return out
 }
 
 func payloadErr(t EventType, err error) error {

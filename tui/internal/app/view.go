@@ -7,16 +7,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Phase 3A ships a deliberately thin view: enough signal that the tailer is
-// wired up correctly, nothing more. 3B replaces the body with the real
-// dashboard (header, round table, metrics bars, Dissent Axis, convergence
-// gauge, synthesis preview).
-
 var headerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
 
 func (m *Model) View() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, headerStyle.Render("Ting TUI — Phase 3A skeleton"))
+	fmt.Fprintln(&b, headerStyle.Render("Ting TUI"))
 
 	s := m.state
 	fmt.Fprintf(&b, "forum:   %s\n", dashIfEmpty(s.ForumID))

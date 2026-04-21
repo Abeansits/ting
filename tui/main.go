@@ -1,7 +1,6 @@
 // Binary ting-tui is the terminal dashboard for a Ting forum directory. It
 // reads dashboard-state.json for the initial frame and tails
-// dashboard-events.jsonl for live updates. It talks to the filesystem
-// directly; no Rust server required. See .coord/plan-v2.md Track 3.
+// dashboard-events.jsonl for live updates.
 package main
 
 import (

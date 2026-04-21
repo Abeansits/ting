@@ -1,6 +1,7 @@
 package data
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -42,8 +43,7 @@ func TestLoadState_MissingReturnsNilNil(t *testing.T) {
 
 func TestLoadState_MalformedReturnsError(t *testing.T) {
 	dir := t.TempDir()
-	path := StatePath(dir)
-	if err := writeFile(path, []byte("not json")); err != nil {
+	if err := os.WriteFile(StatePath(dir), []byte("not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadState(dir); err == nil {

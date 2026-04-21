@@ -16,42 +16,43 @@ import (
 	"github.com/Abeansits/ting/tui/internal/model"
 )
 
-// Tailer streams events from dashboard-events.jsonl. It drains the existing
-// contents first, then watches the containing directory via fsnotify and
-// re-drains on writes.
+// Tailer streams events from dashboard-events.jsonl. It drains existing
+// lines first, then watches the containing directory with fsnotify and
+// re-drains on each write.
 //
-// Partial-line handling: a trailing chunk without a final '\n' is buffered
-// and prepended to the next read. The Rust writer guarantees PIPE_BUF-atomic
-// full-line appends (see schemas/CONTRACT.md), so a torn read here is always
-// just "we called Read mid-append, which is fine — the rest will arrive".
+// Partial trailing bytes (no '\n' yet) are buffered and prepended to the
+// next read. The Rust writer guarantees PIPE_BUF-atomic full-line appends
+// per schemas/CONTRACT.md, so a mid-append read just gets less data, never
+// a torn line.
 //
-// Unknown event types and malformed JSON are logged and skipped. Per the
-// contract, the tailer must never fatal the consumer on bad data.
+// Malformed JSON and unknown event types are logged and skipped.
 type Tailer struct {
 	path    string
 	events  chan model.Event
 	errs    chan error
+	ready   chan struct{}
 	watcher *fsnotify.Watcher
 }
 
-// NewTailer prepares the watcher but does not start draining. Call Run in a
-// goroutine; cancel the context to stop.
+// NewTailer prepares the watcher. Call Run in a goroutine; cancel ctx to stop.
 func NewTailer(path string) (*Tailer, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
-		return nil, fmt.Errorf("new watcher: %w", err)
+		return nil, err
 	}
-	// Watch the parent directory so a freshly-created log file (v0.4 Phase
-	// 1B will create the file on the first emitted event) still fires the
-	// first write event. Watching the file directly would miss the create.
-	if err := w.Add(filepath.Dir(path)); err != nil {
+	// Watch the parent directory so a freshly-created log file (Phase 1B
+	// creates it on the first emitted event) still fires the first write.
+	// Watching the file directly would miss the create.
+	dir := filepath.Dir(path)
+	if err := w.Add(dir); err != nil {
 		_ = w.Close()
-		return nil, fmt.Errorf("watch %s: %w", filepath.Dir(path), err)
+		return nil, fmt.Errorf("watch %s: %w", dir, err)
 	}
 	return &Tailer{
 		path:    path,
 		events:  make(chan model.Event, 64),
 		errs:    make(chan error, 8),
+		ready:   make(chan struct{}),
 		watcher: w,
 	}, nil
 }
@@ -59,11 +60,16 @@ func NewTailer(path string) (*Tailer, error) {
 func (t *Tailer) Events() <-chan model.Event { return t.events }
 func (t *Tailer) Errors() <-chan error       { return t.errs }
 
-// Close stops the watcher. Run will see its events channel close and exit.
+// Ready is closed once the initial drain completes. Tests use this to sync
+// with the tailer without time.Sleep.
+func (t *Tailer) Ready() <-chan struct{} { return t.ready }
+
+// Close stops the watcher. Run will exit when its events channel closes.
 func (t *Tailer) Close() error { return t.watcher.Close() }
 
-// Run drains the log and then pumps appends. Blocks until ctx is cancelled
-// or the watcher closes. Closes Events and Errors on exit.
+// Run drains the log, signals Ready, then pumps subsequent appends. Blocks
+// until ctx is cancelled or the watcher closes. Closes Events and Errors on
+// exit.
 func (t *Tailer) Run(ctx context.Context) {
 	defer close(t.events)
 	defer close(t.errs)
@@ -132,6 +138,7 @@ func (t *Tailer) Run(ctx context.Context) {
 	if !drain() {
 		return
 	}
+	close(t.ready)
 
 	for {
 		select {
@@ -154,7 +161,7 @@ func (t *Tailer) Run(ctx context.Context) {
 					_ = file.Close()
 					file = nil
 				}
-				buf = buf[:0]
+				buf = nil
 			}
 		case err, ok := <-t.watcher.Errors:
 			if !ok {
@@ -167,7 +174,7 @@ func (t *Tailer) Run(ctx context.Context) {
 	}
 }
 
-// pushErr sends err on the errs channel; returns false if ctx cancelled
+// pushErr reports err on the errs channel; returns false if ctx cancelled
 // mid-send so the caller can bail out of Run.
 func (t *Tailer) pushErr(ctx context.Context, err error) bool {
 	select {

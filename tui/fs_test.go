@@ -12,10 +12,7 @@ import (
 )
 
 // TestFixtureReplay is the end-to-end data-spine test: snapshot + JSONL
-// fixtures should drive the reducer to a consistent final state.
-//
-// It also stands in for "manual replay" — future phases can point this at
-// any recorded forum dir and assert the reducer reaches the expected state.
+// fixtures drive the reducer to a consistent final state.
 func TestFixtureReplay(t *testing.T) {
 	dir := filepath.Join("testdata", "sample-forum")
 
@@ -67,8 +64,8 @@ loop:
 	}
 }
 
-// TestReplayFixtureOnEmptyState verifies that a cold start (no snapshot)
-// driven solely by the events log still reaches a coherent reduced state.
+// TestReplayFixtureOnEmptyState verifies a cold start with no snapshot:
+// events alone should drive the reducer to a coherent state.
 func TestReplayFixtureOnEmptyState(t *testing.T) {
 	dir := t.TempDir()
 	path := data.EventLogPath(dir)

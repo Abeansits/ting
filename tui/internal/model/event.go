@@ -27,9 +27,8 @@ const (
 	EventTypeForumComplete       EventType = "forum_complete"
 )
 
-// Event is one line of dashboard-events.jsonl. Payload is kept as RawMessage
-// so unknown payload fields round-trip unchanged and per-type decoders can
-// live where they're consumed (reducer in state.go).
+// Event is one line of dashboard-events.jsonl. Payload stays as RawMessage
+// so unknown fields round-trip and per-type decoders live in the reducer.
 type Event struct {
 	Version   uint32          `json:"version"`
 	Seq       uint64          `json:"seq"`
@@ -39,9 +38,8 @@ type Event struct {
 	Payload   json.RawMessage `json:"payload"`
 }
 
-// ErrUnknownEventType is returned alongside a filled Event when the envelope
-// parses but carries a Type the reader doesn't recognise. Per CONTRACT.md
-// readers MUST skip-and-warn rather than fail.
+// ErrUnknownEventType is returned with a filled Event when the envelope parses
+// but the Type is unrecognised. Per schemas/CONTRACT.md readers skip-and-warn.
 var ErrUnknownEventType = errors.New("unknown event type")
 
 // ParseEvent decodes one JSONL line into an Event. Malformed JSON or missing
@@ -53,8 +51,17 @@ func ParseEvent(line []byte) (Event, error) {
 	if err := json.Unmarshal(line, &e); err != nil {
 		return Event{}, fmt.Errorf("parse event: %w", err)
 	}
-	if e.Version == 0 || e.Seq == 0 || e.ForumID == "" || e.Type == "" || len(e.Payload) == 0 {
-		return Event{}, errors.New("missing required envelope fields")
+	switch {
+	case e.Version == 0:
+		return Event{}, errors.New("envelope missing version")
+	case e.Seq == 0:
+		return Event{}, errors.New("envelope missing seq")
+	case e.ForumID == "":
+		return Event{}, errors.New("envelope missing forum_id")
+	case e.Type == "":
+		return Event{}, errors.New("envelope missing type")
+	case len(e.Payload) == 0:
+		return Event{}, errors.New("envelope missing payload")
 	}
 	if !IsKnownEventType(e.Type) {
 		return e, ErrUnknownEventType

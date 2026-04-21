@@ -6,20 +6,13 @@ import (
 	"github.com/Abeansits/ting/tui/internal/model"
 )
 
-// tailerEventMsg carries one event from the tailer into the Bubble Tea loop.
 type tailerEventMsg struct{ Event model.Event }
 
-// tailerErrMsg surfaces a non-fatal tailer error (IO hiccup, watcher glitch)
-// into the Update loop. 3A records the latest error; 3B can decide whether
-// to render it.
 type tailerErrMsg struct{ Err error }
 
-// tailerClosedMsg fires when the tailer's events channel drains — either
-// because Close was called or the watcher failed hard.
 type tailerClosedMsg struct{}
 
-// Init starts the tailer goroutine and returns the first wait-for-event
-// command. Bubble Tea calls this once when the program starts.
+// Init starts the tailer goroutine and the channel-receive commands.
 func (m *Model) Init() tea.Cmd {
 	go m.tailer.Run(m.ctx)
 	return tea.Batch(
@@ -28,8 +21,6 @@ func (m *Model) Init() tea.Cmd {
 	)
 }
 
-// Update folds one message into the model. Keeps the surface small for 3A;
-// 3B can layer on key bindings, scrolling, and animation ticks.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
