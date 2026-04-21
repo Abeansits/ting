@@ -224,28 +224,33 @@ async fn run_tailer(forum_dir: &Path, events_tx: &broadcast::Sender<DashboardEve
         .watch(forum_dir, RecursiveMode::NonRecursive)
         .with_context(|| format!("Failed to watch {}", forum_dir.display()))?;
 
-    // Seek to end: existing content is delivered to clients via backlog read,
-    // not rebroadcast. That also keeps the broadcast buffer small.
-    let mut cursor: u64 = std::fs::metadata(&events_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    // Cursor starts at 0 + initial catch-up scan: covers the window between
+    // the watcher registering and any early event append from a forum task
+    // racing this setup. Clients dedup any overlap via seq.
+    let mut cursor = catch_up(&events_path, 0, events_tx);
 
     while notify_rx.recv().await.is_some() {
         // Coalesce bursts of notifications — one read per quiet period.
         while notify_rx.try_recv().is_ok() {}
-
-        match tail_since(&events_path, cursor) {
-            Ok((new_cursor, new_events)) => {
-                cursor = new_cursor;
-                for ev in new_events {
-                    // Err just means no subscribers; benign.
-                    let _ = events_tx.send(ev);
-                }
-            }
-            Err(e) => eprintln!("event tailer read error: {e:#}"),
-        }
+        cursor = catch_up(&events_path, cursor, events_tx);
     }
     Ok(())
+}
+
+fn catch_up(events_path: &Path, cursor: u64, events_tx: &broadcast::Sender<DashboardEvent>) -> u64 {
+    match tail_since(events_path, cursor) {
+        Ok((new_cursor, new_events)) => {
+            for ev in new_events {
+                // Err just means no subscribers; benign.
+                let _ = events_tx.send(ev);
+            }
+            new_cursor
+        }
+        Err(e) => {
+            eprintln!("event tailer read error: {e:#}");
+            cursor
+        }
+    }
 }
 
 /// Read any complete lines from `path` starting at byte offset `cursor`.
@@ -502,6 +507,31 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].seq, 1);
         assert_eq!(events[1].seq, 2);
+    }
+
+    /// Regression: tailer must broadcast events that were already in the
+    /// file at startup. Without the initial catch-up scan, a forum task
+    /// racing the tailer's watcher setup silently loses its first events
+    /// for any client already subscribed.
+    #[tokio::test]
+    async fn tailer_catches_up_preexisting_events_on_startup() {
+        let dir = tmp_dir("tailer-catchup");
+        for seq in 1..=3u64 {
+            append_event(&dir, &make_event(seq, EventType::RoundStarted)).unwrap();
+        }
+        let (tx, mut rx) = broadcast::channel::<DashboardEvent>(32);
+        spawn_tailer(dir.clone(), tx);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut got = Vec::new();
+        while got.len() < 3 && Instant::now() < deadline {
+            match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
+                Ok(Ok(ev)) => got.push(ev),
+                _ => continue,
+            }
+        }
+        assert_eq!(got.len(), 3, "expected 3 events, got {}", got.len());
+        assert_eq!(got.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1, 2, 3]);
     }
 
     #[tokio::test]
