@@ -186,7 +186,7 @@
       "type": "object",
       "required": ["rounds_used"],
       "properties": {
-        "rounds_used": { "type": "integer", "minimum": 1 }
+        "rounds_used": { "type": "integer", "minimum": 0 }
       }
     }
   }

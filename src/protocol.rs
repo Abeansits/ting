@@ -1,6 +1,8 @@
+use crate::events::{self, EventType};
 use crate::{classifier, config, convergence, metric_scoring, substrate, synthesis, types::*};
 use anyhow::Result;
 use rand::seq::SliceRandom;
+use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -15,6 +17,9 @@ pub struct RunOptions {
     /// written. Requires `classify` — scoring has no metrics to score without
     /// the classifier. Controlled by `--dashboard` minus `--no-metric-scoring`.
     pub score: bool,
+    /// When true, append lifecycle events (synthesis / convergence /
+    /// forum_complete) to `dashboard-events.jsonl`. Tracks `--dashboard`.
+    pub emit_events: bool,
 }
 
 /// Run a complete forum deliberation through the modified Delphi protocol.
@@ -84,6 +89,14 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
             review_mode,
         )?;
         substrate::write_atomic(&round_dir.join("synthesis.md"), &synth)?;
+        if opts.emit_events {
+            events::emit(
+                forum_path,
+                &forum_config.forum.id,
+                EventType::Synthesis,
+                json!({ "round": round_num, "word_count": synth.split_whitespace().count() }),
+            )?;
+        }
 
         // Generate claims
         eprintln!("  Generating claims...");
@@ -159,6 +172,15 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
                 forum_config.convergence.threshold,
             )?;
 
+            if opts.emit_events {
+                events::emit(
+                    forum_path,
+                    &forum_config.forum.id,
+                    EventType::Convergence,
+                    json!({ "round": round_num, "score": result.score() }),
+                )?;
+            }
+
             match &result {
                 ConvergenceResult::Converged { score, summary } => {
                     eprintln!("  CONVERGED (score: {:.1}): {}", score, summary);
@@ -226,6 +248,15 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
         &final_result,
         hollow_warning.as_deref(),
     )?;
+
+    if opts.emit_events {
+        events::emit(
+            forum_path,
+            &forum_config.forum.id,
+            EventType::ForumComplete,
+            json!({ "rounds_used": prior_rounds.len() }),
+        )?;
+    }
     Ok(())
 }
 
