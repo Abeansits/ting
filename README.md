@@ -31,11 +31,17 @@ A multi-agent deliberation tool where any LLM, CLI tool, or human can participat
 # Build
 cargo build --release
 
-# Run a 3-model deliberation
+# Run a 3-model deliberation with the live dashboard
+# (opens http://127.0.0.1:3420 in your browser)
 ting new "Should we use Pipecat or Vapi for voice?" \
   --participant codex \
   --participant gemini \
-  --participant claude
+  --participant claude \
+  --dashboard
+
+# Or run without the dashboard (behaves identically to v0.3)
+ting new "Should we use Pipecat or Vapi for voice?" \
+  --participant codex --participant gemini --participant claude
 
 # Check progress
 ting status <forum-id>
@@ -48,6 +54,9 @@ ting result --html <forum-id>
 
 # Publish report to the web
 ting result --html --publish <forum-id>
+
+# Re-open the dashboard against an existing forum (in-progress or done)
+ting serve <forum-id>
 ```
 
 ### What You'll See
@@ -59,7 +68,7 @@ ting result --html --publish <forum-id>
      ██║   ██║██║╚██╗██║██║   ██║
      ██║   ██║██║ ╚████║╚██████╔╝
      ╚═╝   ╚═╝╚═╝  ╚═══╝ ╚═════╝
-  v0.3.0  Structured deliberation between AI models
+  v0.4.0  Structured deliberation between AI models
 
   Forum  ting-2026-03-27-a1b2c3d4
   Topic  Should we use Pipecat or Vapi for voice?
@@ -147,6 +156,19 @@ Lists all forums with status and topic.
 ### `ting result <forum-id>`
 
 Prints the final synthesis and dissent to terminal. Add `--html` to generate a self-contained HTML report. Add `--publish` to push it to the web via here.now.
+
+### `ting serve <forum-id>`
+
+Serves the dashboard against an existing forum directory — in-progress or
+completed — without running a new round.
+
+```bash
+ting serve <forum-id>              # default port 3420, auto-opens browser
+ting serve <forum-id> --port 4000 --no-open
+```
+
+Ctrl+C triggers a graceful shutdown; a second Ctrl+C (or a 5s stall from a
+long-lived SSE client) forces exit so the process never hangs.
 
 ### `ting respond <forum-id>`
 
@@ -281,17 +303,105 @@ min_rounds = 2
 model = "claude-opus"
 ```
 
+## Dashboard
+
+Ting v0.4 ships a live dashboard so you can watch a deliberation unfold —
+per-round syntheses arriving, per-metric scores updating each round, and
+convergence climbing toward threshold — instead of tailing log files.
+
+### What runs where
+
+Turning on `--dashboard` activates four cooperating pieces:
+
+1. **JSONL event log.** The Fire Keeper emits an append-only event stream
+   to `~/.ting/sessions/<forum-id>/dashboard-events.jsonl` with a
+   versioned envelope (`seq`, `forum_id`, `timestamp`, `type`, `payload`).
+   Monotonic `seq` is the authoritative ordering key. The v0.4 runtime
+   emits five event types: `classifier_metrics`, `metric_scores`,
+   `synthesis`, `convergence`, and `forum_complete`; five more
+   (`forum_started`, `round_started`, `participant_response`, `claims`,
+   `alignment`) are reserved by the contract for a future phase.
+   JSON Schemas, a companion `dashboard-state.json` snapshot format,
+   and reader/writer guarantees live in [`schemas/`](./schemas).
+
+2. **Pre-round classifier.** Before round 1, the Fire Keeper generates
+   5–10 question-specific metrics plus a mandatory Dissent Axis, written
+   to `round-0/metrics.json`. These are the axes the dashboard animates
+   across rounds. Opt out with `--no-classifier`.
+
+3. **Per-round metric scoring.** After each round's responses and
+   synthesis land, the Fire Keeper scores every classifier metric in a
+   single batched pass and emits a `metric_scores` event. Scoring
+   failures warn-and-continue; they never abort the forum. Opt out with
+   `--no-metric-scoring`.
+
+4. **HTML dashboard (axum).** A small `axum` server binds to loopback
+   (default port `3420`), serves the dashboard shell at `GET /`, and an
+   SSE stream at `GET /api/events` that replays the log and then
+   forwards live events. A compacted snapshot is also available at
+   `GET /api/state` when a `dashboard-state.json` snapshot exists on
+   disk (404 otherwise; clients can always seed from the SSE `init`
+   frame). The UI renders metric bars, a convergence gauge, and a
+   synthesis feed in pure CSS; no charting library. The Dissent Axis
+   is always pinned to the top of the metrics panel.
+
+### Running it
+
+```bash
+# Forum + dashboard, auto-opens the browser
+ting new "topic" --participant codex --participant gemini --dashboard
+
+# Non-default port, no browser auto-open
+ting new "topic" --participant codex --dashboard --port 4000 --no-open
+
+# Turn off the Fire Keeper axes (dashboard still works; metrics panel
+# stays empty since no classifier_metrics event is emitted)
+ting new "topic" --participant codex --dashboard --no-classifier
+
+# Re-open the dashboard against an existing forum (in-progress or done)
+ting serve <forum-id>
+```
+
+The server binds to `127.0.0.1` only. There is no authentication and no
+remote exposure knob — if you want to share a run, use `ting result --html
+--publish <forum-id>` for the post-hoc report.
+
+### Go TUI
+
+A standalone terminal client lives under [`tui/`](./tui) for when a
+browser isn't convenient. It reads the same filesystem contract
+(`dashboard-state.json` + `dashboard-events.jsonl`) directly, with no
+HTTP dependency on the Rust server. Build and run:
+
+```bash
+cd tui
+go build -o ting-tui .
+./ting-tui ~/.ting/sessions/<forum-id>
+```
+
+Keys: `q` / Ctrl-C / Esc quit, `r` reload snapshot, `?` help,
+`↑`/`↓` or `j`/`k` focus rounds, `1`–`9` jump to a round, `0` clear.
+
+### Without `--dashboard`
+
+Behavior is bit-for-bit identical to v0.3: no event log, no classifier
+call, no server, no added disk state. Upgrade safely without opting in.
+
 ## Directory Structure
 
 ```
 ~/.ting/sessions/<forum-id>/
   meta.toml
+  dashboard-events.jsonl      # append-only event stream (with --dashboard)
+  round-0/
+    metrics.json              # classifier axes         (with --dashboard)
   round-1/
     prompt.md
     codex.md
     gemini.md
     synthesis.md
     claims.toml
+    metric-scores.json        # per-round scores        (with --dashboard)
   round-2/
     ...
   final/
@@ -299,7 +409,7 @@ model = "claude-opus"
     claims.toml
     dissent.md
     meta-summary.toml
-    report.html        # with --html flag
+    report.html               # with --html flag
 ```
 
 ## Architecture
