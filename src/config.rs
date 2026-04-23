@@ -116,7 +116,7 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
 /// Built-in presets for common model CLIs.
 fn builtin_preset(name: &str) -> Option<(&'static str, &'static str)> {
     match name {
-        "codex" => Some(("command", "codex exec --full-auto -c model_reasoning_effort=medium -")),
+        "codex" => Some(("command", "codex exec --full-auto --skip-git-repo-check -c model_reasoning_effort=medium -")),
         "gemini" => Some(("command", "cat {prompt_file} | gemini -p ' '")),
         "claude" => Some(("command", "cat {prompt_file} | claude -p - --model claude-opus-4-6")),
         "opencode" => Some(("command", "opencode run -m opencode-go/kimi-k2.5")),

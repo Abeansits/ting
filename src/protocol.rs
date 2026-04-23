@@ -328,6 +328,7 @@ fn invoke_participants(
         }
         drop(tx);
 
+        let mut failures: Vec<String> = Vec::new();
         for (name, result) in rx {
             match result {
                 Ok(response) => {
@@ -337,8 +338,20 @@ fn invoke_participants(
                 }
                 Err(e) => {
                     eprintln!("  \u{2717} {} failed: {}", name, e);
+                    failures.push(format!("{}: {}", name, e));
                 }
             }
+        }
+        // A requested participant that errors mid-round is not optional input —
+        // silently dropping it would produce a synthesis that misleads the user
+        // about whose voice was in the room. Abort so they can investigate and
+        // re-run. Manual participant timeouts continue to honor `late_policy`.
+        if !failures.is_empty() {
+            anyhow::bail!(
+                "Aborting round {round}: {n} requested participant(s) failed and would be silently dropped:\n  - {list}",
+                n = failures.len(),
+                list = failures.join("\n  - "),
+            );
         }
     }
 
@@ -864,6 +877,43 @@ mod tests {
         assert!(prompt.contains("Go is simpler"));
         assert!(prompt.contains("Cross-Examination Assignments"));
         assert!(prompt.contains("Critique"));
+    }
+
+    #[test]
+    fn test_invoke_participants_fails_loud_when_command_fails() {
+        // A requested command participant that errors must abort the round
+        // rather than silently dropping the participant from the synthesis.
+        let dir = std::env::temp_dir().join(format!(
+            "ting-test-fail-loud-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("round-0")).unwrap();
+
+        let mut config = make_test_config("topic");
+        config.participants.names = vec!["broken".to_string()];
+        config.participants.configs = HashMap::from([(
+            "broken".into(),
+            ParticipantConfig {
+                participant_type: "command".into(),
+                command: Some("false".into()),
+            },
+        )]);
+        config.timing.participant_timeout = "5s".into();
+
+        let result = invoke_participants(&config, "test prompt", &dir, 0);
+        assert!(result.is_err(), "expected aggregation guard to abort");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("broken"),
+            "error should name the failed participant, got: {err}"
+        );
+        assert!(
+            err.contains("Aborting"),
+            "error should announce the abort, got: {err}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
