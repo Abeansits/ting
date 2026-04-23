@@ -5,6 +5,38 @@ All notable changes to Ting will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-04-23
+
+### Fixed
+
+- **Silent participant drop when codex fails the trust check.** Running
+  `ting new --participant codex ...` from a directory codex didn't trust
+  (e.g. `/tmp`) used to print one buried `✗ codex failed: Not inside a
+  trusted directory ...` line and silently proceed with the survivors. The
+  synthesis was generated as if every requested participant had spoken,
+  misleading the user about whose voice was in the room.
+
+  Two changes close the hole:
+
+  - **Built-in `codex` preset now passes `--skip-git-repo-check`**, codex's
+    own escape hatch for programmatic invocation. The trust check is a UI
+    affordance for interactive `codex` use; for ting's case (the user
+    explicitly opted in via `--participant codex`, ting feeds the prompt
+    and consumes stdout) it's not load-bearing. The flag eliminates the
+    failure entirely. Custom commands (`--participant codex:command:...`)
+    and user presets in `~/.ting/config.toml` are unaffected — they keep
+    whatever the user wrote.
+
+  - **Command-participant failures now abort the round.** Previously, if
+    any command participant errored mid-round, ting printed a single
+    warning and continued with the survivors, making a synthesis built on
+    partial data indistinguishable from one built on complete data. As of
+    v0.4.1, any failed command participant aborts the forum with a message
+    naming the failed participants and their errors. Defense in depth for
+    any future startup failure (custom codex command without the skip flag,
+    transient API failure, auth expiry, rate limit, etc.). Manual
+    participant timeouts continue to honor `late_policy`.
+
 ## [0.4.0] - 2026-04-21
 
 First release of the live dashboard stack: an append-only JSONL event log

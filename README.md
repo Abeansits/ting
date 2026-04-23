@@ -68,7 +68,7 @@ ting serve <forum-id>
      ██║   ██║██║╚██╗██║██║   ██║
      ██║   ██║██║ ╚████║╚██████╔╝
      ╚═╝   ╚═╝╚═╝  ╚═══╝ ╚═════╝
-  v0.4.0  Structured deliberation between AI models
+  v0.4.1  Structured deliberation between AI models
 
   Forum  ting-2026-03-27-a1b2c3d4
   Topic  Should we use Pipecat or Vapi for voice?
@@ -189,7 +189,7 @@ ting respond <forum-id> -r 2 -n human -f my-response.md
 
 | Preset     | Command                                  | Input Method |
 |------------|------------------------------------------|--------------|
-| `codex`    | `codex exec --full-auto -`               | stdin        |
+| `codex`    | `codex exec --full-auto --skip-git-repo-check -` | stdin    |
 | `gemini`   | `cat {prompt_file} \| gemini -p ' '`     | file pipe    |
 | `claude`   | `cat {prompt_file} \| claude -p -`       | file pipe    |
 | `opencode` | `opencode run`                           | stdin        |
@@ -283,7 +283,7 @@ names = ["codex", "gemini"]
 
 [participants.codex]
 type = "command"
-command = "codex exec --full-auto -"
+command = "codex exec --full-auto --skip-git-repo-check -"
 
 [participants.gemini]
 type = "command"
