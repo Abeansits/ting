@@ -16,16 +16,20 @@ replayed or observed without coupling the renderer to the orchestrator.
 
 - **Dashboard event contract** (#1) — append-only `dashboard-events.jsonl` per
   forum with a versioned envelope (`version`, `seq`, `forum_id`, `timestamp`,
-  `type`, `payload`). Event types: `forum_started`, `round_started`,
-  `participant_response`, `synthesis`, `claims`, `alignment`,
-  `classifier_metrics`, `metric_scores`, `convergence`, `forum_complete`.
-  Monotonic `seq` is the authoritative ordering key; `timestamp` is
-  informational. Writes are `O_APPEND` + `\n`-terminated + `sync_data()`,
-  atomic per-line under `PIPE_BUF`. Companion `dashboard-state.json`
-  snapshot is written via temp-file + rename with directory fsync.
-  JSON Schema (Draft 2020-12) for both the event envelope and the
-  state snapshot lives under `schemas/`, alongside `CONTRACT.md` covering
-  reader/writer guarantees, versioning, and cross-language notes.
+  `type`, `payload`). Monotonic `seq` is the authoritative ordering key;
+  `timestamp` is informational. Writes are `O_APPEND` + `\n`-terminated
+  + `sync_data()`, atomic per-line under `PIPE_BUF`. The v0.4 runtime
+  emits five event types: `classifier_metrics`, `metric_scores`,
+  `synthesis`, `convergence`, `forum_complete`. The contract also
+  reserves five more for a future phase — `forum_started`, `round_started`,
+  `participant_response`, `claims`, `alignment` — with schemas and
+  reader guards in place today. A `dashboard-state.json` snapshot
+  format (temp + rename + directory fsync) is defined and fully
+  exercised by tests; `run_forum` does not yet write one in production,
+  so clients currently seed from the SSE `init` frame. JSON Schema
+  (Draft 2020-12) for both the envelope and the snapshot lives under
+  `schemas/`, alongside `CONTRACT.md` covering reader/writer guarantees,
+  versioning, and cross-language notes.
 
 - **Pre-round Fire Keeper classifier** (#2) — before round 1, when
   `--dashboard` is on, the Fire Keeper generates 5–10 question-specific
@@ -44,7 +48,8 @@ replayed or observed without coupling the renderer to the orchestrator.
 - **Dashboard HTTP server** (#4, #5, #6) — `axum` 0.8 router bound to
   loopback only, default port `3420`:
   - `GET /` serves the dashboard HTML shell.
-  - `GET /api/state` returns the compacted snapshot.
+  - `GET /api/state` returns the compacted snapshot when
+    `dashboard-state.json` exists on disk (404 otherwise).
   - `GET /api/events` is an SSE stream: `event: init` (snapshot) →
     `event: update` (full log replay) → live events deduped by `seq` →
     `event: ping` every 15s → clean close on `forum_complete`.
@@ -81,8 +86,8 @@ replayed or observed without coupling the renderer to the orchestrator.
   `0` clear.
 
 - **CI** (#8) — new `Go TUI` GitHub Actions workflow running `gofmt`,
-  `go vet`, and `go test -race -count=1`, guarding the new module from
-  day one.
+  `go vet`, `go build ./...`, and `go test -race -count=1`, guarding
+  the new module from day one.
 
 ### Changed
 

@@ -306,7 +306,7 @@ model = "claude-opus"
 ## Dashboard
 
 Ting v0.4 ships a live dashboard so you can watch a deliberation unfold —
-participant responses landing, per-metric scores updating each round, and
+per-round syntheses arriving, per-metric scores updating each round, and
 convergence climbing toward threshold — instead of tailing log files.
 
 ### What runs where
@@ -316,11 +316,13 @@ Turning on `--dashboard` activates four cooperating pieces:
 1. **JSONL event log.** The Fire Keeper emits an append-only event stream
    to `~/.ting/sessions/<forum-id>/dashboard-events.jsonl` with a
    versioned envelope (`seq`, `forum_id`, `timestamp`, `type`, `payload`).
-   Monotonic `seq` is the authoritative ordering key. A companion
-   `dashboard-state.json` snapshot is written atomically (temp + rename
-   + directory fsync) so late joiners can replay from a known cursor.
-   JSON Schemas and reader/writer guarantees live in
-   [`schemas/`](./schemas).
+   Monotonic `seq` is the authoritative ordering key. The v0.4 runtime
+   emits five event types: `classifier_metrics`, `metric_scores`,
+   `synthesis`, `convergence`, and `forum_complete`; five more
+   (`forum_started`, `round_started`, `participant_response`, `claims`,
+   `alignment`) are reserved by the contract for a future phase.
+   JSON Schemas, a companion `dashboard-state.json` snapshot format,
+   and reader/writer guarantees live in [`schemas/`](./schemas).
 
 2. **Pre-round classifier.** Before round 1, the Fire Keeper generates
    5–10 question-specific metrics plus a mandatory Dissent Axis, written
@@ -334,12 +336,14 @@ Turning on `--dashboard` activates four cooperating pieces:
    `--no-metric-scoring`.
 
 4. **HTML dashboard (axum).** A small `axum` server binds to loopback
-   (default port `3420`), serves the dashboard shell at `GET /`, a
-   snapshot JSON at `GET /api/state`, and an SSE stream at
-   `GET /api/events` that replays the log and then forwards live events.
-   The client renders metric bars, a convergence gauge, and a synthesis
-   feed in pure CSS; no charting library. The Dissent Axis is always
-   pinned to the top of the metrics panel.
+   (default port `3420`), serves the dashboard shell at `GET /`, and an
+   SSE stream at `GET /api/events` that replays the log and then
+   forwards live events. A compacted snapshot is also available at
+   `GET /api/state` when a `dashboard-state.json` snapshot exists on
+   disk (404 otherwise; clients can always seed from the SSE `init`
+   frame). The UI renders metric bars, a convergence gauge, and a
+   synthesis feed in pure CSS; no charting library. The Dissent Axis
+   is always pinned to the top of the metrics panel.
 
 ### Running it
 
@@ -350,7 +354,8 @@ ting new "topic" --participant codex --participant gemini --dashboard
 # Non-default port, no browser auto-open
 ting new "topic" --participant codex --dashboard --port 4000 --no-open
 
-# Turn off the Fire Keeper axes (dashboard still works, bars stay inert)
+# Turn off the Fire Keeper axes (dashboard still works; metrics panel
+# stays empty since no classifier_metrics event is emitted)
 ting new "topic" --participant codex --dashboard --no-classifier
 
 # Re-open the dashboard against an existing forum (in-progress or done)
@@ -388,7 +393,6 @@ call, no server, no added disk state. Upgrade safely without opting in.
 ~/.ting/sessions/<forum-id>/
   meta.toml
   dashboard-events.jsonl      # append-only event stream (with --dashboard)
-  dashboard-state.json        # compacted snapshot      (with --dashboard)
   round-0/
     metrics.json              # classifier axes         (with --dashboard)
   round-1/
