@@ -136,7 +136,7 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### OSS-02 · Working installation and releases
 
-- [ ] Fix the source-install quick start: clone, enter the repository, then `cargo install --path . --locked`.
+- [x] Fix the source-install quick start: clone, enter the repository, then `cargo install --path . --locked`.
 - [ ] Publish macOS and Linux binaries with checksums.
 - [ ] Document supported platforms and the tested minimum Rust version.
 
@@ -163,18 +163,20 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### OSS-05 · Contributor entry points
 
-- [ ] Add `CONTRIBUTING.md` with setup, architecture pointers, and validation commands.
-- [ ] Add issue and PR templates plus support/security reporting guidance.
+- [x] Add `CONTRIBUTING.md` with setup, architecture pointers, and validation commands.
+- [x] Add issue and PR templates plus support/security reporting guidance.
 - [ ] Identify small, independently actionable good-first-issue tasks.
 
 **Done when:** a new contributor can find a task, make a change, and validate it without undocumented maintainer knowledge.
 
 ### OSS-06 · CI and toolchain checks
 
-- [ ] Apply formatting and enforce `cargo fmt --check` in CI.
-- [ ] Add Clippy and a declared/tested minimum Rust version.
-- [ ] Test supported platforms.
-- [ ] Add meaningful regression coverage for the reliability findings above.
+- [x] Apply formatting and enforce `cargo fmt --check` in CI.
+- [x] Add Clippy and a declared/tested minimum Rust version.
+- [ ] Test supported platforms (Linux/macOS CI matrix added; awaiting results).
+- [x] Add meaningful regression coverage for the reliability findings above.
+
+**Implementation:** all 152 Rust tests pass locally on Rust 1.88.0. Style checks use Rust 1.92.0; formatting and Clippy pass. CI includes Linux minimum/stable Rust, macOS stable Rust, Node reducer tests, and Go race tests on both platforms. Workflows also run for stacked PRs.
 
 **Done when:** the documented local checks match CI and platform/toolchain promises are exercised.
 

@@ -1,0 +1,17 @@
+name: Idea or improvement
+description: Propose a useful change to Ting.
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What are you trying to do?
+      description: Describe the problem or workflow before proposing a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include alternatives or examples if helpful.
+    validations:
+      required: true

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Contributor guide, bug/feature and PR templates, and support/security guidance.
+- Formatting and Clippy checks, a tested Rust 1.88 minimum, and Linux/macOS CI
+  coverage for Rust and the Go TUI. Stacked PRs now receive CI too.
+
 ### Fixed
 
 - Truncate topic and preset-command list cells at Unicode character boundaries,
