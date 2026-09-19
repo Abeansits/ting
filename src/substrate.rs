@@ -413,7 +413,8 @@ pub fn invoke_fire_keeper_model(
     }
 }
 
-/// Invoke the claude CLI directly (no shell, safe from metacharacters)
+/// Invoke Claude directly with literal arguments and the Fire Keeper deadline.
+/// On timeout the shared runner terminates its process group and reaps the child.
 fn invoke_claude(model: &str, prompt: &str, timeout: Duration) -> Result<String> {
     let mut cmd = std::process::Command::new("claude");
     cmd.arg("--model")
