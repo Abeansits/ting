@@ -397,6 +397,9 @@ call, no server, no added disk state. Upgrade safely without opting in.
     metrics.json              # classifier axes         (with --dashboard)
   round-1/
     prompt.md
+    prompts/
+      codex.md                # exact input with participant identity
+      gemini.md
     codex.md
     gemini.md
     synthesis.md

@@ -269,6 +269,21 @@ fn invoke_participants(
     let round_dir = forum_path.join(format!("round-{}", round));
     let mut responses = HashMap::new();
 
+    // Save exactly what each participant sees, including aliases sharing a CLI.
+    let prompts_dir = round_dir.join("prompts");
+    std::fs::create_dir_all(&prompts_dir)?;
+    let mut participant_prompts = HashMap::new();
+    for name in &config.participants.names {
+        let personalized = format!(
+            "# Your participant identity\n\n\
+             You are participant `{name}` in this forum. Use this exact name for \
+             your own prior responses and cross-examination assignment, regardless \
+             of your model or CLI name. Speak only for `{name}`.\n\n{prompt}",
+        );
+        substrate::write_atomic(&prompts_dir.join(format!("{}.md", name)), &personalized)?;
+        participant_prompts.insert(name.clone(), personalized);
+    }
+
     // Split participants by type
     let command_participants: Vec<String> = config
         .participants
@@ -313,7 +328,7 @@ fn invoke_participants(
             let tx = tx.clone();
             let name = name.clone();
             let cmd_template = config.participants.configs[&name].command.clone().unwrap();
-            let prompt = prompt.to_string();
+            let prompt = participant_prompts[&name].clone();
             let round_dir = round_dir.clone();
             let timeout = participant_timeout;
 
@@ -363,6 +378,7 @@ fn invoke_participants(
         eprintln!();
         for name in &manual_participants {
             eprintln!("  \u{23f3} Waiting for YOU ({})", name);
+            eprintln!("    Read your prompt: {}", prompts_dir.join(format!("{}.md", name)).display());
         }
         eprintln!();
         eprintln!(
@@ -469,7 +485,7 @@ fn generate_crossexam_prompt(config: &ForumConfig, prior_rounds: &[RoundData]) -
 
     prompt.push_str(
         "\n## Instructions\n\n\
-         Find YOUR name in the assignments above.\n\n\
+         Use your supplied participant identity to find your assignment above.\n\n\
          1. **Critique**: Examine your assigned participant's position. \
          Find weaknesses, gaps, contradictions, or unstated assumptions.\n\
          2. **Defend/Revise**: Reconsider your own Round 1 position in light of ALL responses. \
@@ -804,6 +820,46 @@ fn is_review_mode(config: &ForumConfig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn participant_aliases_receive_distinct_persisted_identities() {
+        let dir = std::env::temp_dir().join(format!("ting-test-identities-{}", uuid::Uuid::new_v4()));
+        let round_dir = substrate::create_round_dir(&dir, 2).unwrap();
+        let mut config = make_test_config("Rollout strategy?");
+        config.participants.names = vec!["optimist".into(), "skeptic".into(), "human".into()];
+        config.participants.configs = HashMap::from([
+            ("optimist".into(), ParticipantConfig { participant_type: "command".into(), command: Some("cat".into()) }),
+            ("skeptic".into(), ParticipantConfig { participant_type: "command".into(), command: Some("cat".into()) }),
+            ("human".into(), ParticipantConfig { participant_type: "manual".into(), command: None }),
+        ]);
+        config.timing.participant_timeout = "5s".into();
+        std::fs::write(round_dir.join("human.md"), "Human response").unwrap();
+        let prior = vec![RoundData {
+            number: 1,
+            stage: Stage::Proposal,
+            responses: HashMap::from([
+                ("optimist".into(), "Ship now".into()),
+                ("skeptic".into(), "Test first".into()),
+                ("human".into(), "Stage the rollout".into()),
+            ]),
+            synthesis: None,
+            claims: None,
+        }];
+        let shared_prompt = generate_crossexam_prompt(&config, &prior).unwrap();
+        let responses = invoke_participants(&config, &shared_prompt, &dir, 2).unwrap();
+        for name in &config.participants.names {
+            let saved = std::fs::read_to_string(round_dir.join("prompts").join(format!("{}.md", name))).unwrap();
+            assert!(saved.starts_with(&format!("# Your participant identity\n\nYou are participant `{}`", name)));
+            assert!(saved.contains(&format!("- **{}** critiques **", name)));
+            assert!(saved.ends_with(&shared_prompt));
+            if name != "human" {
+                assert_eq!(responses[name], saved.trim());
+            }
+        }
+        assert_ne!(responses["optimist"], responses["skeptic"]);
+        assert_eq!(responses["human"], "Human response");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn final_output_preserves_dissent_independently_of_convergence() {

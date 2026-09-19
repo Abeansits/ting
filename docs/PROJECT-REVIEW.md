@@ -41,8 +41,10 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### FIX-03 · P1 · Give each participant an explicit identity
 
-- [ ] Add participant-specific identity and critique-target instructions.
-- [ ] Support aliases and multiple participants using the same underlying model.
+- [x] Add participant-specific identity and instructions for selecting their critique assignment.
+- [x] Support aliases and multiple participants using the same underlying model.
+
+**Implementation:** personalized inputs are saved under `round-N/prompts/<name>.md`, sent to command participants, and linked in human-participant instructions. A regression exercises two aliases sharing the same command plus a human participant.
 
 **Evidence:** `src/protocol.rs::invoke_participants` sends everyone the same prompt; the cross-examination prompt asks each to “Find YOUR name.”
 
