@@ -43,3 +43,11 @@ test("snapshot already accounts for its event-log prefix", () => {
   assert.equal(reducer.state.convergenceHistory.length, 1);
   assert.equal(reducer.state.status, "completed");
 });
+
+test("failed forums remain failed when their log is replayed", () => {
+  const reducer = loadReducer();
+  reducer.applyEvent({ seq: 1, type: "forum_started", payload: { topic: "Failure", participants: ["alice"], max_rounds: 1 } });
+  reducer.applyEvent({ seq: 2, type: "forum_failed", payload: { error: "Finalization failed" } });
+  reducer.applyEvent({ seq: 1, type: "forum_started", payload: {} });
+  assert.equal(reducer.state.status, "failed");
+});

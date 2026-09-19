@@ -14,7 +14,7 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 - [x] Bound internal model calls and clean up processes (FIX-02; merged in [#14](https://github.com/Abeansits/ting/pull/14)).
 - [x] Supply participant identities and critique targets (FIX-03; merged in [#15](https://github.com/Abeansits/ting/pull/15)).
 - [x] Emit dashboard lifecycle events (FIX-04; merged in [#16](https://github.com/Abeansits/ting/pull/16)).
-- [x] Validate judgments and represent unavailable evaluations honestly (FIX-05; implemented, pending PR merge).
+- [x] Validate judgments and represent unavailable evaluations honestly (FIX-05; merged in [#17](https://github.com/Abeansits/ting/pull/17)).
 - [ ] Correct completion status and response persistence (FIX-06, FIX-07).
 - [ ] Fix Unicode topic truncation (FIX-08).
 

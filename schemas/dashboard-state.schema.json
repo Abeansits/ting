@@ -40,7 +40,7 @@
     },
     "status": {
       "type": "string",
-      "enum": ["pending", "in_progress", "completed"]
+      "enum": ["pending", "in_progress", "completed", "failed"]
     },
     "rounds": {
       "type": "array",

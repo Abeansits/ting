@@ -52,6 +52,7 @@ pub enum EventType {
     MetricScores,
     Convergence,
     ForumComplete,
+    ForumFailed,
 }
 
 /// Envelope written as one line of `dashboard-events.jsonl`.
@@ -274,6 +275,7 @@ mod tests {
             }),
             EventType::Convergence => json!({ "round": 2, "score": 6.1 }),
             EventType::ForumComplete => json!({ "rounds_used": 2 }),
+            EventType::ForumFailed => json!({ "error": "Finalization failed" }),
         }
     }
 
@@ -288,6 +290,7 @@ mod tests {
         EventType::MetricScores,
         EventType::Convergence,
         EventType::ForumComplete,
+        EventType::ForumFailed,
     ];
 
     #[test]

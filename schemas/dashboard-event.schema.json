@@ -39,7 +39,8 @@
         "classifier_metrics",
         "metric_scores",
         "convergence",
-        "forum_complete"
+        "forum_complete",
+        "forum_failed"
       ]
     },
     "payload": {
@@ -66,6 +67,8 @@
       "then": { "properties": { "payload": { "$ref": "#/$defs/MetricScoresPayload" } } } },
     { "if": { "properties": { "type": { "const": "convergence" } } },
       "then": { "properties": { "payload": { "$ref": "#/$defs/ConvergencePayload" } } } },
+    { "if": { "properties": { "type": { "const": "forum_failed" } } },
+      "then": { "properties": { "payload": { "type": "object", "required": ["error"], "properties": { "error": { "type": "string" } } } } } },
     { "if": { "properties": { "type": { "const": "forum_complete" } } },
       "then": { "properties": { "payload": { "$ref": "#/$defs/ForumCompletePayload" } } } }
   ],

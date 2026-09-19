@@ -78,6 +78,7 @@ pub enum ForumStatus {
     Pending,
     InProgress,
     Completed,
+    Failed,
 }
 
 impl DashboardState {

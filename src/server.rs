@@ -125,13 +125,18 @@ async fn serve_events(
 
         let mut completed = false;
         for ev in backlog {
-            if matches!(ev.event_type, EventType::ForumComplete) {
+            if matches!(ev.event_type, EventType::ForumComplete | EventType::ForumFailed) {
                 completed = true;
             }
             yield Ok(event_to_sse(&ev));
             if completed {
                 return;
             }
+        }
+
+        if let Ok(Some(record)) = crate::run_status::read(&forum_dir) {
+            yield Ok(SseEvent::default().event("run_status").data(serde_json::to_string(&record).unwrap()));
+            if record.status.is_terminal() { return; }
         }
 
         let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
@@ -146,7 +151,7 @@ async fn serve_events(
                             continue; // already delivered via backlog
                         }
                         max_seq = ev.seq;
-                        let done = matches!(ev.event_type, EventType::ForumComplete);
+                        let done = matches!(ev.event_type, EventType::ForumComplete | EventType::ForumFailed);
                         yield Ok(event_to_sse(&ev));
                         if done {
                             return;
@@ -159,6 +164,12 @@ async fn serve_events(
                     }
                 },
                 _ = ticker.tick() => {
+                    if let Ok(Some(record)) = crate::run_status::read(&forum_dir) {
+                        if record.status.is_terminal() {
+                            yield Ok(SseEvent::default().event("run_status").data(serde_json::to_string(&record).unwrap()));
+                            return;
+                        }
+                    }
                     yield Ok(SseEvent::default().event("ping"));
                 }
             }
@@ -504,6 +515,19 @@ mod tests {
             body.contains("\"completed\"") && body.contains("es.close()"),
             "JS must close SSE when init snapshot reports completed state",
         );
+    }
+
+    #[tokio::test]
+    async fn stopped_runner_closes_sse_with_terminal_status() {
+        for status in [crate::run_status::Status::Failed, crate::run_status::Status::Interrupted] {
+            let dir = tmp_dir("terminal-status");
+            crate::run_status::write(&dir, status, Some("Runner stopped".into())).unwrap();
+            let resp = router(dir).oneshot(Request::get("/api/events").body(Body::empty()).unwrap()).await.unwrap();
+            let body = tokio::time::timeout(Duration::from_secs(2), body_bytes(resp)).await.unwrap();
+            let body = String::from_utf8(body.to_vec()).unwrap();
+            assert!(body.contains("event: run_status"));
+            assert!(body.contains(status.as_str()));
+        }
     }
 
     #[tokio::test]

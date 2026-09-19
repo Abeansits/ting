@@ -251,9 +251,14 @@ pub fn current_round(forum: &Path) -> u32 {
     round
 }
 
-/// Check if a forum has completed (final/synthesis.md exists)
+/// Require a successful outcome and all final artifacts; support legacy forums.
 pub fn is_completed(forum: &Path) -> bool {
-    forum.join("final").join("synthesis.md").exists()
+    let successful = match crate::run_status::read(forum) {
+        Ok(Some(record)) => record.status == crate::run_status::Status::Completed,
+        Ok(None) => true,
+        Err(_) => false,
+    };
+    successful && crate::run_status::has_final_artifacts(forum)
 }
 
 /// Invoke a participant command with timeout.
@@ -566,7 +571,13 @@ mod tests {
         assert!(!is_completed(&dir)); // dir exists but no synthesis.md
 
         fs::write(final_dir.join("synthesis.md"), "done").unwrap();
+        assert!(!is_completed(&dir));
+        for name in ["claims.toml", "dissent.md", "meta-summary.toml"] {
+            fs::write(final_dir.join(name), "done").unwrap();
+        }
         assert!(is_completed(&dir));
+        crate::run_status::write(&dir, crate::run_status::Status::Failed, Some("finalization failed".into())).unwrap();
+        assert!(!is_completed(&dir));
 
         fs::remove_dir_all(&dir).ok();
     }

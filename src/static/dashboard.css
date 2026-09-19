@@ -104,6 +104,11 @@ header { margin-bottom: 28px; }
 }
 .status-pill[data-status="completed"]::before { background: var(--green); }
 
+.status-pill[data-status="failed"],
+.status-pill[data-status="interrupted"] { color: var(--red); }
+.status-pill[data-status="failed"]::before,
+.status-pill[data-status="interrupted"]::before { background: var(--red); }
+
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50%      { opacity: 0.5; transform: scale(1.4); }

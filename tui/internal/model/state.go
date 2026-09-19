@@ -14,6 +14,7 @@ const (
 	StatusPending    Status = "pending"
 	StatusInProgress Status = "in_progress"
 	StatusCompleted  Status = "completed"
+	StatusFailed     Status = "failed"
 )
 
 // RoundSummary mirrors the snapshot's per-round shape. Loosely-typed payload
@@ -131,6 +132,8 @@ func (s *State) Apply(e Event) error {
 		s.ClassifierMetrics = e.Payload
 	case EventTypeForumComplete:
 		s.Status = StatusCompleted
+	case EventTypeForumFailed:
+		s.Status = StatusFailed
 	case EventTypeClaims, EventTypeAlignment:
 		// Not carried in the snapshot shape.
 	}

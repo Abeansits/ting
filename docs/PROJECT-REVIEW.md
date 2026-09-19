@@ -76,9 +76,11 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### FIX-06 · P2 · Make completion explicit and durable
 
-- [ ] Persist running, completed, failed, and interrupted states.
-- [ ] Mark completion only after all required final artifacts succeed.
-- [ ] Make `status`, `list`, `result`, and dashboard state agree.
+- [x] Persist running/completed/failed outcomes and recognize a dead runner as interrupted.
+- [x] Mark completion only after all required final artifacts succeed.
+- [x] Make `status`, `list`, `result`, and browser dashboard use the run outcome.
+
+**Implementation:** `run-status.json` is atomically written and synced. Finalization failure records the error and emits `forum_failed`; terminal and HTML result commands reject incomplete runs. The browser checks the outcome on replay and heartbeat. Unix dead-PID detection reports interrupted runs; it is a local-process check, not a portable session lease (PID reuse and copied sessions remain limitations). The TUI consumes failure events; dead-runner detection is currently in the Rust CLI/browser path.
 
 **Evidence:** `src/substrate.rs::is_completed` checks for `final/synthesis.md`, but `write_final_output` writes it before dissent and metadata finish.
 

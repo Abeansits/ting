@@ -26,6 +26,38 @@ pub struct RunOptions {
 /// Supports auto-extend: if convergence score < 5 at max_rounds, runs one extra round
 /// to avoid premature termination while capping sycophancy from over-deliberation.
 pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOptions) -> Result<()> {
+    use crate::run_status::{self, Status};
+    run_status::write(forum_path, Status::Running, None)?;
+    let result = run_forum_inner(forum_config, forum_path, opts).and_then(|rounds_used| {
+        run_status::write(forum_path, Status::Completed, None)?;
+        Ok(rounds_used)
+    });
+    match result {
+        Ok(rounds_used) => {
+            if opts.emit_events {
+                // Final artifacts and their durable outcome are already committed.
+                if let Err(error) = events::emit(forum_path, &forum_config.forum.id, EventType::ForumComplete, json!({ "rounds_used": rounds_used })) {
+                    eprintln!("  Warning: could not announce completed forum: {error:#}");
+                }
+            }
+            Ok(())
+        }
+        Err(error) => {
+            let message = format!("{error:#}");
+            if let Err(status_error) = run_status::write(forum_path, Status::Failed, Some(message.clone())) {
+                eprintln!("  Warning: could not record failed forum: {status_error:#}");
+            }
+            if opts.emit_events {
+                if let Err(event_error) = events::emit(forum_path, &forum_config.forum.id, EventType::ForumFailed, json!({ "error": message })) {
+                    eprintln!("  Warning: could not announce failed forum: {event_error:#}");
+                }
+            }
+            Err(error)
+        }
+    }
+}
+
+fn run_forum_inner(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOptions) -> Result<usize> {
     let mut prior_rounds: Vec<RoundData> = Vec::new();
     let review_mode = is_review_mode(forum_config);
 
@@ -87,8 +119,7 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
         let responses = invoke_participants(forum_config, &prompt, forum_path, round_num, opts.emit_events)?;
 
         if responses.is_empty() {
-            eprintln!("  No responses received. Ending deliberation.");
-            break;
+            anyhow::bail!("No responses received; forum cannot produce a final result.");
         }
 
         eprintln!(
@@ -271,15 +302,7 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
         hollow_warning.as_deref(),
     )?;
 
-    if opts.emit_events {
-        events::emit(
-            forum_path,
-            &forum_config.forum.id,
-            EventType::ForumComplete,
-            json!({ "rounds_used": prior_rounds.len() }),
-        )?;
-    }
-    Ok(())
+    Ok(prior_rounds.len())
 }
 
 fn invoke_participants(
@@ -884,6 +907,8 @@ mod tests {
                 participant.command = Some("printf 'A response'".into());
             }
             run_forum(&config, &dir, &RunOptions { emit_events: enabled, ..RunOptions::default() }).unwrap();
+            assert!(substrate::is_completed(&dir));
+            assert_eq!(crate::run_status::read(&dir).unwrap().unwrap().status, crate::run_status::Status::Completed);
             if enabled {
                 let log = std::fs::read_to_string(events::event_log_path(&dir)).unwrap();
                 let events: Vec<events::DashboardEvent> = log.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
@@ -907,6 +932,31 @@ mod tests {
             }
             std::fs::remove_dir_all(dir).unwrap();
         }
+    }
+
+    #[test]
+    fn finalization_failure_is_never_reported_as_completed() {
+        let dir = std::env::temp_dir().join(format!("ting-test-finalization-{}", uuid::Uuid::new_v4()));
+        // A directory at the dissent destination forces a late write failure.
+        std::fs::create_dir_all(dir.join("final/dissent.md")).unwrap();
+        let mut config = make_test_config("A failed finalization");
+        config.forum.max_rounds = 1;
+        config.convergence.min_rounds = 1;
+        config.convergence.judge_command = Some("printf 'SCORE: 8\nSUMMARY: Agreement\nALIGNMENT: alice=8 bob=8\n'".into());
+        config.synthesis.command = Some("printf 'A synthesis'".into());
+        for participant in config.participants.configs.values_mut() {
+            participant.participant_type = "command".into();
+            participant.command = Some("printf 'A response'".into());
+        }
+        assert!(run_forum(&config, &dir, &RunOptions { emit_events: true, ..RunOptions::default() }).is_err());
+        assert!(dir.join("final/synthesis.md").exists());
+        assert!(!substrate::is_completed(&dir));
+        let record = crate::run_status::read(&dir).unwrap().unwrap();
+        assert_eq!(record.status, crate::run_status::Status::Failed);
+        assert!(record.error.unwrap().contains("dissent.md"));
+        assert!(events::log_contains(&dir, EventType::ForumFailed).unwrap());
+        assert!(!events::log_contains(&dir, EventType::ForumComplete).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
