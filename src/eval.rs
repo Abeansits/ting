@@ -504,14 +504,20 @@ pub fn generate_eval_html(eval_dir: &Path) -> Result<String> {
         "(Forum synthesis not available)".to_string()
     };
 
+    let esc = |s: &str| -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    };
+
     // Parse scores
     let get_score = |section: &str, key: &str| -> String {
         scores_raw
             .lines()
             .skip_while(|l| !l.starts_with(&format!("[{}]", section)))
             .find(|l| l.starts_with(key))
-            .and_then(|l| l.split('=').nth(1))
-            .map(|v| v.trim().to_string())
+            .and_then(|l| l.split_once('=').map(|(_, value)| value))
+            .map(|v| esc(v.trim()))
             .unwrap_or_else(|| "—".to_string())
     };
 
@@ -536,12 +542,6 @@ pub fn generate_eval_html(eval_dir: &Path) -> Result<String> {
         "Forum" => "#4ade80",
         "Baseline" => "#facc15",
         _ => "#8b949e",
-    };
-
-    let esc = |s: &str| -> String {
-        s.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
     };
 
     Ok(format!(

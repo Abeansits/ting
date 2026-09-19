@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Escape model metadata and evaluation score cells in HTML exports, matching the
+  treatment of other untrusted report text.
+
 ## [0.5.0-rc.1] - 2026-09-19
 
 Release candidate for the reliability and public-welcome milestones. Unit,
