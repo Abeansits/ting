@@ -167,7 +167,7 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 - [x] Add `CONTRIBUTING.md` with setup, architecture pointers, and validation commands.
 - [x] Add issue and PR templates plus support/security reporting guidance.
-- [ ] Identify small, independently actionable good-first-issue tasks.
+- [x] Identify small, independently actionable good-first-issue tasks ([#23](https://github.com/Abeansits/ting/issues/23), [#24](https://github.com/Abeansits/ting/issues/24)).
 
 **Done when:** a new contributor can find a task, make a change, and validate it without undocumented maintainer knowledge.
 
@@ -184,10 +184,12 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### OSS-07 · Execution, privacy, and cost clarity
 
-- [ ] Document actual CLI commands, working directories, and execution permissions.
-- [ ] Explain what context is sent to providers and what publishing exposes.
-- [ ] Identify the internal model operations and which optional features add calls.
-- [ ] Add `ting doctor` to check prerequisites before a paid run.
+- [x] Document actual CLI commands, working directories, and execution permissions.
+- [x] Explain what context is sent to providers and what publishing exposes.
+- [x] Identify the internal model operations and which optional features add calls.
+- [x] Add `ting doctor` to check prerequisites before a paid run.
+
+**Implementation:** `docs/EXECUTION.md` documents commands, privacy, and call overhead. Doctor checks known executable files without running them; custom shell commands and authentication are explicitly left for manual inspection. JSON output and missing-binary exit behavior are smoke-tested.
 
 **Done when:** users can understand the execution model and resolve common setup problems before starting deliberation.
 

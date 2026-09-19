@@ -38,6 +38,7 @@ ting demo
 
 # Run a 3-model deliberation with the live dashboard
 # (opens http://127.0.0.1:3420 in your browser)
+ting doctor --participant codex --participant gemini --participant claude
 ting new "Should we use Pipecat or Vapi for voice?" \
   --participant codex \
   --participant gemini \
@@ -128,6 +129,13 @@ ting serve <forum-id>
 Dissent is not failure — it's the most valuable output when models genuinely disagree.
 
 ## CLI Reference
+
+### `ting doctor`
+
+Checks installed binaries without running model commands or contacting providers.
+Add `--participant` for each preset you plan to use, or `--json` for machine-readable
+output. Authentication and custom shell commands require your own inspection.
+See [execution, privacy, and cost](docs/EXECUTION.md) before a live run.
 
 ### `ting demo`
 

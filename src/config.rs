@@ -117,7 +117,7 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
 }
 
 /// Built-in presets for common model CLIs.
-fn builtin_preset(name: &str) -> Option<(&'static str, &'static str)> {
+pub(crate) fn builtin_preset(name: &str) -> Option<(&'static str, &'static str)> {
     match name {
         "codex" => Some((
             "command",
