@@ -182,7 +182,7 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
             }
 
             match &result {
-                ConvergenceResult::Converged { score, summary } => {
+                ConvergenceResult::Converged { score, summary, .. } => {
                     eprintln!("  CONVERGED (score: {:.1}): {}", score, summary);
                     last_convergence = Some(result);
                     break; // converged — exit loop, write final output below
@@ -603,31 +603,28 @@ fn write_final_output(
         }
     }
 
-    // Dissent document
-    match convergence_result {
-        ConvergenceResult::Divergent {
-            key_disagreements, ..
-        } => {
-            let last_responses = rounds
-                .last()
-                .map(|r| &r.responses)
-                .cloned()
-                .unwrap_or_default();
-            let dissent = synthesis::generate_dissent(
-                &config.synthesis,
-                &config.forum.topic,
-                &last_responses,
-                key_disagreements,
-            )?;
-            substrate::write_atomic(&final_dir.join("dissent.md"), &dissent)?;
-        }
-        ConvergenceResult::Converged { .. } => {
-            substrate::write_atomic(
-                &final_dir.join("dissent.md"),
-                "# Dissent\n\nNo unresolved disagreements — forum reached consensus.\n",
-            )?;
-        }
-    }
+    // Reaching the stopping threshold does not imply unanimity. Inspect the
+    // final positions even when the judge did not list any disagreements.
+    let key_disagreements = match convergence_result {
+        ConvergenceResult::Converged { key_disagreements, .. }
+        | ConvergenceResult::Divergent { key_disagreements, .. } => key_disagreements,
+    };
+    let last_responses = rounds
+        .last()
+        .map(|r| &r.responses)
+        .cloned()
+        .unwrap_or_default();
+    let dissent = synthesis::generate_dissent(
+        &config.synthesis,
+        &config.forum.topic,
+        &last_responses,
+        key_disagreements,
+    )?;
+    let dissent = match hollow_warning {
+        Some(warning) => format!("{}\n\n{}", warning, dissent),
+        None => dissent,
+    };
+    substrate::write_atomic(&final_dir.join("dissent.md"), &dissent)?;
 
     // Meta summary
     let (status, score) = match convergence_result {
@@ -807,6 +804,66 @@ fn is_review_mode(config: &ForumConfig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_output_preserves_dissent_independently_of_convergence() {
+        // Echo the dissent prompt to verify the real model boundary without
+        // paid calls: both the judge's objections and final positions must
+        // reach the dissent pass, including when the judge lists no objections.
+        for (score, objections, warning) in [
+            (8.0, vec!["Rollout remains disputed".to_string()], None),
+            (8.0, Vec::new(), None),
+            (8.0, Vec::new(), Some("> **Hollow consensus detected.** Contested claims remain.")),
+            (4.0, vec!["Rollout remains disputed".to_string()], None),
+        ] {
+            let dir = std::env::temp_dir().join(format!("ting-test-dissent-{}", uuid::Uuid::new_v4()));
+            let mut config = make_test_config("Rollout strategy?");
+            config.synthesis.command = Some("cat".into());
+            let result = if score >= 7.0 {
+                ConvergenceResult::Converged {
+                    score,
+                    summary: "Enough agreement to stop".into(),
+                    key_disagreements: objections.clone(),
+                }
+            } else {
+                ConvergenceResult::Divergent { score, key_disagreements: objections.clone() }
+            };
+            let rounds = vec![RoundData {
+                number: 2,
+                stage: Stage::CrossExam,
+                responses: HashMap::from([
+                    ("alice".into(), "Ship now".into()),
+                    ("bob".into(), "Wait for the accessibility audit".into()),
+                ]),
+                synthesis: Some("The majority favors shipping".into()),
+                claims: None,
+            }];
+
+            write_final_output(&config, &dir, &rounds, &result, warning).unwrap();
+            let dissent = std::fs::read_to_string(dir.join("final/dissent.md")).unwrap();
+            assert!(dissent.contains("Wait for the accessibility audit"));
+            assert!(dissent.contains("Ship now"));
+            assert!(dissent.contains("Do not infer unanimity"));
+            for objection in objections {
+                assert!(dissent.contains(&objection));
+            }
+            assert!(!dissent.contains("No unresolved disagreements — forum reached consensus"));
+            if let Some(warning) = warning {
+                assert!(dissent.starts_with(warning));
+            }
+            let summary = std::fs::read_to_string(dir.join("final/meta-summary.toml")).unwrap();
+            let expected_status = if score >= 7.0 { "converged" } else { "divergent" };
+            assert!(summary.contains(&format!("status = \"{}\"", expected_status)));
+            // A sentence about one settled issue must not hide other dissent.
+            std::fs::write(
+                dir.join("final/dissent.md"),
+                "No unresolved disagreements on language choice.\n\nBob still requests an accessibility audit.",
+            ).unwrap();
+            let html = crate::report::generate_html_report(&config, &dir).unwrap();
+            assert!(html.contains("Bob still requests an accessibility audit."));
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
 
     #[test]
     fn test_assign_cross_exam_all_assigned() {

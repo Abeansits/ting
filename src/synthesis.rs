@@ -207,7 +207,11 @@ fn build_dissent_prompt(
          For each disagreement:\n\
          1. State the disagreement clearly\n\
          2. Summarize each participant's position\n\
-         3. Note why convergence was not reached\n\n\
+         3. Explain why the disagreement remains unresolved\n\n\
+         The forum may have reached its stopping threshold despite remaining dissent.\n\
+         Do not infer unanimity from convergence or from an empty key-disagreements list.\n\
+         Check the final participant positions for minority objections. If none remain,\n\
+         say that no unresolved disagreements were identified in those positions.\n\n\
          Dissent is a first-class output — it represents valuable, genuine differences \
          in perspective, not failure.\n\
          Write in clear markdown.\n",

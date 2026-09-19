@@ -188,8 +188,7 @@ pub fn generate_html_report(config: &ForumConfig, forum_path: &Path) -> Result<S
         .collect::<Vec<_>>()
         .join(" ");
 
-    let has_dissent = !final_dissent.is_empty()
-        && !final_dissent.contains("No unresolved disagreements");
+    let has_dissent = !final_dissent.is_empty();
 
     let dissent_section = if has_dissent {
         format!(

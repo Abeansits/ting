@@ -155,7 +155,11 @@ fn parse_judge_response(output: &str, threshold: u32) -> Result<ConvergenceResul
     let score = score.unwrap_or(5.0);
 
     if score >= threshold as f32 {
-        Ok(ConvergenceResult::Converged { score, summary })
+        Ok(ConvergenceResult::Converged {
+            score,
+            summary,
+            key_disagreements: disagreements,
+        })
     } else {
         Ok(ConvergenceResult::Divergent {
             score,
@@ -178,9 +182,10 @@ DISAGREEMENTS:
 
         let result = parse_judge_response(output, 7).unwrap();
         match result {
-            ConvergenceResult::Converged { score, summary } => {
+            ConvergenceResult::Converged { score, summary, key_disagreements } => {
                 assert!((score - 8.5).abs() < 0.01);
                 assert!(summary.contains("Strong agreement"));
+                assert_eq!(key_disagreements, ["Minor difference on timing of rollout"]);
             }
             _ => panic!("Expected Converged"),
         }

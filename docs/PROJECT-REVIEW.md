@@ -17,9 +17,11 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### FIX-01 · P1 · Preserve dissent after convergence
 
-- [ ] Retain the judge's disagreements independently of its convergence score.
-- [ ] Generate the dissent document even when enough agreement exists to stop.
-- [ ] Ensure hollow-consensus warnings and final dissent cannot contradict one another.
+- [x] Retain the judge's disagreements independently of its convergence score.
+- [x] Generate the dissent document even when enough agreement exists to stop.
+- [x] Carry hollow-consensus warnings into final dissent; remove the hardcoded unanimity assertion.
+
+**Implementation:** the final dissent pass now runs for both converged and divergent forums, with regression coverage for minority objections and hollow-consensus warnings. This adds one model call to converged forums. Generated text still requires model-quality evaluation; the code no longer asserts unanimity from a score.
 
 **Evidence:** `src/convergence.rs::parse_judge_response` discards disagreements on the converged branch. `src/protocol.rs::write_final_output` then writes “No unresolved disagreements.”
 
