@@ -170,9 +170,8 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
         // Score per-participant alignment for position shift tracking (every round)
         if let Some(ref synth) = prior_rounds.last().and_then(|r| r.synthesis.clone()) {
             eprintln!("  Scoring alignment...");
-            if let Ok(alignment) =
-                convergence::evaluate_alignment(&forum_config.convergence, &synth, &responses)
-            {
+            match convergence::evaluate_alignment(&forum_config.convergence, &synth, &responses) {
+                Ok(alignment) => {
                 let alignment_toml: String = alignment
                     .iter()
                     .map(|(k, v)| format!("{} = {:.1}", k, v))
@@ -180,6 +179,8 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
                     .join("\n");
                 let content = format!("[alignment]\nround = {}\n{}\n", round_num, alignment_toml);
                 substrate::write_atomic_toml(&round_dir.join("alignment.toml"), &content)?;
+                }
+                Err(error) => eprintln!("  Warning: {error:#}; alignment scores will be unavailable for this round."),
             }
         }
 

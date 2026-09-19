@@ -64,9 +64,11 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### FIX-05 · P1 · Reject invalid judgments
 
-- [ ] Reject missing, malformed, non-finite, and out-of-range convergence scores.
-- [ ] Validate alignment scores as well.
-- [ ] Use bounded retries and an explicit unavailable/error state instead of invented scores.
+- [x] Reject missing, malformed, non-finite, and out-of-range convergence scores.
+- [x] Validate alignment scores as well.
+- [x] Use bounded retries and an explicit unavailable/error state instead of invented scores.
+
+**Implementation:** both judgment types retry once and then report evaluation unavailable. Convergence failure aborts the run; alignment failure warns without writing fabricated values. Duplicate scores and missing/unknown alignment participants are also rejected.
 
 **Evidence:** `src/convergence.rs` defaults malformed or missing convergence scores to 5 and accepts finite scores outside 1–10; alignment parsing also supplies default scores.
 
