@@ -25,11 +25,11 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 
 - [ ] License and complete package metadata (OSS-01).
 - [ ] Working installation instructions and downloadable binaries (OSS-02).
-- [x] No-account `ting demo` with a representative sample forum (OSS-03; implemented, pending PR merge).
+- [x] No-account `ting demo` with a representative sample forum (OSS-03; [#22](https://github.com/Abeansits/ting/pull/22)).
 - [ ] Concise README, visuals, and real output examples (OSS-04).
-- [ ] Contributor guide, templates, and starter issues (OSS-05).
+- [x] Contributor guide, templates, and starter issues (OSS-05; #21, #23, #24).
 - [x] Formatting, linting, toolchain, and platform checks (OSS-06; [#21](https://github.com/Abeansits/ting/pull/21)).
-- [ ] Execution/cost documentation and `ting doctor` (OSS-07).
+- [x] Execution/cost documentation and `ting doctor` (OSS-07; implemented, pending PR merge).
 - [ ] Offline-capable HTML reports (FIX-10).
 
 **Release gate:** a newcomer can explore Ting without credentials and diagnose setup before a paid run.

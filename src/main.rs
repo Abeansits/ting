@@ -3,6 +3,7 @@ mod config;
 mod convergence;
 mod dashboard_state;
 mod demo;
+mod doctor;
 mod eval;
 mod events;
 mod metric_scoring;
@@ -29,6 +30,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Check installed prerequisites without running models or contacting providers
+    Doctor {
+        /// Also check these participant presets (repeat for multiple participants)
+        #[arg(short, long)]
+        participant: Vec<String>,
+        /// Print a machine-readable report
+        #[arg(long)]
+        json: bool,
+    },
     /// Explore an illustrative forum without model CLIs, accounts, or API calls
     Demo {
         /// Save the sample to this new directory instead of the sessions folder
@@ -223,6 +233,24 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Doctor { participant, json } => {
+            let report = doctor::inspect(&participant)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                for check in &report.checks {
+                    println!("{:<8} {:<12} {}", check.status, check.name, check.detail);
+                }
+                println!();
+                for note in &report.notes {
+                    println!("{note}");
+                }
+            }
+            if !report.ok {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Commands::Demo {
             output,
             no_serve,

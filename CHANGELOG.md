@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ting doctor` checks live-run prerequisites without executing presets or
+  contacting providers, with optional participant checks and JSON output.
+- Execution/privacy/cost documentation and scoped contributor starter issues.
 - `ting demo`: an embedded, hand-written two-round sample with disagreement,
   revision, metrics, and final dissent. No model CLIs or API keys are needed.
   Use `--no-serve` to create the sample without starting the dashboard.
