@@ -1,12 +1,35 @@
 use crate::config;
 use crate::substrate;
 use crate::types::*;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rand::seq::SliceRandom;
 use std::collections::HashMap;
 use std::time::Duration;
 
 const FIRE_KEEPER_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Retry a failed model call or invalid judgment once; never invent a score.
+fn evaluate_with_retry<T>(
+    mut invoke: impl FnMut() -> Result<String>,
+    parse: impl Fn(&str) -> Result<T>,
+    label: &str,
+) -> Result<T> {
+    for attempt in 1..=2 {
+        match invoke().and_then(|output| parse(&output)) {
+            Ok(value) => return Ok(value),
+            Err(error) if attempt == 1 => eprintln!("  Warning: {label} attempt failed: {error:#}. Retrying once."),
+            Err(error) => return Err(error).with_context(|| format!("{label} unavailable after 2 attempts")),
+        }
+    }
+    unreachable!()
+}
+
+/// Both convergence and alignment use finite values on the closed 1–10 scale.
+fn parse_score(raw: &str) -> Result<f32> {
+    let score: f32 = raw.trim().parse().context("Invalid numeric score")?;
+    anyhow::ensure!(score.is_finite() && (1.0..=10.0).contains(&score), "Score must be finite and within 1–10");
+    Ok(score)
+}
 
 fn invoke_judge(convergence_config: &ConvergenceSection, prompt: &str) -> Result<String> {
     let model = config::resolve_model(&convergence_config.judge_model);
@@ -47,8 +70,11 @@ pub fn evaluate_alignment(
          ALIGNMENT: participant_name=score participant_name=score ...\n",
     );
 
-    let output = invoke_judge(convergence_config, &prompt)?;
-    parse_alignment_scores(&output, &names)
+    evaluate_with_retry(
+        || invoke_judge(convergence_config, &prompt),
+        |output| parse_alignment_scores(output, &names),
+        "Alignment evaluation",
+    )
 }
 
 fn parse_alignment_scores(
@@ -56,22 +82,19 @@ fn parse_alignment_scores(
     expected: &[&String],
 ) -> Result<AlignmentScores> {
     let mut scores = AlignmentScores::new();
-    let line = output
-        .lines()
-        .find(|l| l.trim().starts_with("ALIGNMENT:"))
-        .unwrap_or("");
+    let mut lines = output.lines().filter_map(|line| line.trim().strip_prefix("ALIGNMENT:"));
+    let line = lines.next().context("Missing ALIGNMENT line")?;
+    anyhow::ensure!(lines.next().is_none(), "Duplicate ALIGNMENT lines");
 
     for token in line.split_whitespace() {
-        if let Some((name, val)) = token.split_once('=') {
-            if let Ok(score) = val.parse::<f32>() {
-                scores.insert(name.to_string(), score);
-            }
-        }
+        let (name, value) = token.split_once('=').context("Malformed alignment entry")?;
+        anyhow::ensure!(expected.iter().any(|expected| expected.as_str() == name), "Unknown alignment participant: {name}");
+        let score = parse_score(value)?;
+        anyhow::ensure!(scores.insert(name.to_string(), score).is_none(), "Duplicate alignment participant: {name}");
     }
 
-    // Fill missing with 5.0
     for name in expected {
-        scores.entry(name.to_string()).or_insert(5.0);
+        anyhow::ensure!(scores.contains_key(name.as_str()), "Missing alignment score for {name}");
     }
     Ok(scores)
 }
@@ -84,8 +107,11 @@ pub fn evaluate(
     threshold: u32,
 ) -> Result<ConvergenceResult> {
     let prompt = build_judge_prompt(topic, responses);
-    let output = invoke_judge(convergence_config, &prompt)?;
-    parse_judge_response(&output, threshold)
+    evaluate_with_retry(
+        || invoke_judge(convergence_config, &prompt),
+        |output| parse_judge_response(output, threshold),
+        "Convergence evaluation",
+    )
 }
 
 fn build_judge_prompt(topic: &str, responses: &HashMap<String, String>) -> String {
@@ -132,15 +158,8 @@ fn parse_judge_response(output: &str, threshold: u32) -> Result<ConvergenceResul
     for line in output.lines() {
         let line = line.trim();
         if let Some(s) = line.strip_prefix("SCORE:") {
-            // Filter NaN/inf — serde_json panics on non-finite numbers when
-            // the score later lands in a dashboard event payload.
-            score = Some(
-                s.trim()
-                    .parse::<f32>()
-                    .ok()
-                    .filter(|v| v.is_finite())
-                    .unwrap_or(5.0),
-            );
+            anyhow::ensure!(score.is_none(), "Duplicate SCORE lines");
+            score = Some(parse_score(s)?);
             in_disagreements = false;
         } else if let Some(s) = line.strip_prefix("SUMMARY:") {
             summary = s.trim().to_string();
@@ -152,7 +171,7 @@ fn parse_judge_response(output: &str, threshold: u32) -> Result<ConvergenceResul
         }
     }
 
-    let score = score.unwrap_or(5.0);
+    let score = score.context("Missing SCORE line")?;
 
     if score >= threshold as f32 {
         Ok(ConvergenceResult::Converged {
@@ -223,28 +242,52 @@ DISAGREEMENTS:
     }
 
     #[test]
-    fn test_parse_judge_non_finite_score_falls_back_to_5() {
-        for raw in ["SCORE: nan\nSUMMARY: x", "SCORE: inf\nSUMMARY: x", "SCORE: -inf\nSUMMARY: x"] {
-            let result = parse_judge_response(raw, 7).unwrap();
-            let score = match result {
-                ConvergenceResult::Converged { score, .. }
-                | ConvergenceResult::Divergent { score, .. } => score,
-            };
-            assert!(score.is_finite(), "score from {raw:?} should be finite, got {score}");
-            assert!((score - 5.0).abs() < 0.01, "expected 5.0 fallback, got {score}");
+    fn invalid_judgments_are_errors_instead_of_plausible_scores() {
+        for raw in ["SCORE: nan", "SCORE: inf", "SCORE: -inf", "SCORE: 0", "SCORE: 11", "SCORE: nope", "No score", "SCORE: 7\nSCORE: 8"] {
+            assert!(parse_judge_response(raw, 7).is_err(), "accepted {raw:?}");
+        }
+        for raw in ["SCORE: 1", "SCORE: 10", "SCORE: 7.5"] {
+            assert!(parse_judge_response(raw, 7).is_ok());
         }
     }
 
     #[test]
-    fn test_parse_judge_malformed_defaults_to_5() {
-        let output = "This model didn't follow the format at all.";
-        let result = parse_judge_response(output, 7).unwrap();
-        match result {
-            ConvergenceResult::Divergent { score, .. } => {
-                assert!((score - 5.0).abs() < 0.01);
-            }
-            _ => panic!("Malformed output should default to divergent with score 5"),
+    fn alignment_requires_exactly_one_valid_score_per_participant() {
+        let names = ["alice".to_string(), "bob".to_string()];
+        let expected = names.iter().collect::<Vec<_>>();
+        let valid = parse_alignment_scores("ALIGNMENT: alice=7.5 bob=1", &expected).unwrap();
+        assert_eq!(valid["alice"], 7.5);
+        assert_eq!(valid["bob"], 1.0);
+        for raw in [
+            "No scores", "ALIGNMENT: alice=8", "ALIGNMENT: alice=8 bob=NaN",
+            "ALIGNMENT: alice=0 bob=8", "ALIGNMENT: alice=8 bob=11",
+            "ALIGNMENT: alice=8 bob=8 charlie=8", "ALIGNMENT: alice=8 alice=9 bob=8",
+            "ALIGNMENT: alice=8 bob=8 extra", "ALIGNMENT: alice=8 bob=8\nALIGNMENT: alice=9 bob=9",
+        ] {
+            assert!(parse_alignment_scores(raw, &expected).is_err(), "accepted {raw:?}");
         }
+    }
+
+    #[test]
+    fn invalid_judgment_retries_once_then_recovers_or_reports_unavailable() {
+        let mut calls = 0;
+        let value = evaluate_with_retry(
+            || { calls += 1; Ok(if calls == 1 { "invalid" } else { "SCORE: 8" }.to_string()) },
+            |output| parse_judge_response(output, 7),
+            "Convergence evaluation",
+        ).unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(value.score(), 8.0);
+
+        calls = 0;
+        let error = evaluate_with_retry(
+            || { calls += 1; Ok("invalid".to_string()) },
+            |output| parse_judge_response(output, 7),
+            "Convergence evaluation",
+        ).unwrap_err();
+        assert_eq!(calls, 2);
+        assert!(format!("{error:#}").contains("unavailable after 2 attempts"));
+        assert!(format!("{error:#}").contains("Missing SCORE"));
     }
 
     #[test]

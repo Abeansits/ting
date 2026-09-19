@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject missing, duplicate, malformed, non-finite, and out-of-range convergence
+  and alignment scores instead of substituting 5. Judgment calls retry once;
+  exhausted convergence evaluation aborts with an explicit error, while optional
+  alignment scoring warns and remains unavailable.
 - Emit forum-start, round-start, and participant-response dashboard events from
   real runs, including human responses. Browser replay ignores already-applied
   sequence numbers, preventing duplicate convergence history after reconnects.

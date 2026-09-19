@@ -13,8 +13,8 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 - [x] Preserve dissent after convergence (FIX-01; merged in [#13](https://github.com/Abeansits/ting/pull/13)).
 - [x] Bound internal model calls and clean up processes (FIX-02; merged in [#14](https://github.com/Abeansits/ting/pull/14)).
 - [x] Supply participant identities and critique targets (FIX-03; merged in [#15](https://github.com/Abeansits/ting/pull/15)).
-- [x] Emit dashboard lifecycle events (FIX-04; implemented, pending PR merge).
-- [ ] Validate judgments and represent unavailable evaluations honestly (FIX-05).
+- [x] Emit dashboard lifecycle events (FIX-04; merged in [#16](https://github.com/Abeansits/ting/pull/16)).
+- [x] Validate judgments and represent unavailable evaluations honestly (FIX-05; implemented, pending PR merge).
 - [ ] Correct completion status and response persistence (FIX-06, FIX-07).
 - [ ] Fix Unicode topic truncation (FIX-08).
 
