@@ -14,6 +14,11 @@ sample data, not live model evaluations.*
 
 ## Try it
 
+**No compiler needed:** download a [v0.5.0-rc.1 preview archive](https://github.com/Abeansits/ting/releases/tag/v0.5.0-rc.1)
+for Linux or macOS, verify its checksum, and run `bin/ting demo`.
+See [binary installation](docs/INSTALL.md) for platform selection and commands.
+The preview is available for testing; full live-model regression remains pending.
+
 Build on **macOS or Linux** with [Rust 1.88+](https://rustup.rs/):
 
 ```sh

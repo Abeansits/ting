@@ -3,16 +3,14 @@
 //! Phase 1A contract: the append-only JSONL event log is the source of truth;
 //! `dashboard-state.json` is a compaction of the log so late joiners (SSE
 //! clients, Go TUIs) can cheaply render the current state without replaying
-//! every event. The protocol rewrites the snapshot atomically after each event
-//! append (or debounced if profiling shows cost); consumers only ever see a
-//! fully-written file. Full reader/writer rules live at `schemas/CONTRACT.md`.
+//! every event. The current runtime replays the event log and does not yet emit
+//! snapshots; this module provides the optional atomic snapshot helpers.
+//! Full reader/writer rules live at `schemas/CONTRACT.md`.
 //!
-//! Durability: `write_state` fsyncs the temp file before rename and the
-//! containing directory after, so a successful call means the bytes survive
-//! a power loss, not just a process crash.
+//! `write_state` fsyncs the temp file before rename and attempts to fsync the
+//! containing directory afterward. Directory synchronization is best effort.
 //!
-//! Like `events`, nothing here is wired into `protocol.rs` yet. See the module
-//! docs on `events` for the phase 1A / 1B split rationale.
+//! Readers accept snapshots today; production snapshot compaction remains future work.
 #![allow(dead_code)]
 
 use anyhow::{Context, Result};
@@ -123,6 +121,8 @@ pub fn state_path(forum_dir: &Path) -> PathBuf {
 /// leave the snapshot empty, corrupted, or missing the rename — even though
 /// POSIX rename is atomic *from a reader's perspective*, its on-disk
 /// visibility after a crash is not guaranteed until the directory is fsynced.
+/// Directory synchronization below is best effort, so success does not promise
+/// power-loss durability on every filesystem.
 pub fn write_state(forum_dir: &Path, state: &DashboardState) -> Result<()> {
     let path = state_path(forum_dir);
     let tmp_path = path.with_extension("json.tmp");

@@ -1,5 +1,8 @@
 # Ting v0.2 Implementation Plan
 
+> Historical planning notes. Current work and completion evidence live in
+> [ROADMAP.md](ROADMAP.md) and [the project review](docs/PROJECT-REVIEW.md).
+
 Based on 3 Ting forum sessions (v0.2 roadmap, divergence mode design, posting strategy) + Sebastian's additions.
 
 ## Phase 1: Foundation (do first — everything else depends on this)

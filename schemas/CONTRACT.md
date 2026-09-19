@@ -1,7 +1,7 @@
-# Ting v0.4 Dashboard Contract
+# Dashboard event and snapshot contract (v1)
 
-Phase 1A ships the cross-language contract consumed by Track 2 (axum SSE
-bridge) and Track 3 (Go Bubble Tea TUI). This document is the source of truth
+The browser dashboard (axum SSE) and Go TUI consume this filesystem contract.
+This document is the source of truth
 for reader/writer guarantees; the JSON Schemas next to it (`dashboard-event.schema.json`,
 `dashboard-state.schema.json`) are the wire-level spec. If a guarantee below
 contradicts the code, fix the code.
@@ -11,7 +11,7 @@ contradicts the code, fix the code.
 | Path | Role | Writer | Readers |
 |------|------|--------|---------|
 | `dashboard-events.jsonl` | Append-only canonical event stream | Rust protocol (single writer) | axum tailer, Go TUI tailer |
-| `dashboard-state.json` | Compacted snapshot of the events log up to `latest_seq` | Rust protocol | Same — used for `init` on SSE connect |
+| `dashboard-state.json` | Optional compacted snapshot up to `latest_seq`; not emitted by the current runtime | Snapshot helper / future compactor | Same — used for `init` on SSE connect |
 
 ## Writer guarantees (Rust protocol)
 
@@ -19,9 +19,10 @@ contradicts the code, fix the code.
 - Exactly one process writes. Multi-writer would need a lock file; that is
   out of scope for v0.4.
 - Each event is one JSON object followed by `\n`. The writer uses `O_APPEND`
-  and calls `sync_data()` after the line. A single `write_all` of a line
-  under `PIPE_BUF` (4096 on Linux/macOS) is atomic under POSIX, so tailing
-  readers see either zero or the full line — never a split.
+  and calls `sync_data()` after the line. Readers may observe a partial trailing
+  record and must wait for its newline: Rust's [`write_all`](https://doc.rust-lang.org/std/io/trait.Write.html#method.write_all)
+  can perform multiple underlying writes. The newline, not a file-write atomicity
+  assumption, defines a complete record.
 - `seq` is monotonically increasing, starts at 1, and has no gaps under
   normal operation. On resume (fresh process), `next_seq` returns
   `max(existing_seq) + 1` so a restart continues where the crashed process
@@ -32,8 +33,8 @@ contradicts the code, fix the code.
 - Written via `.json.tmp` + `rename`. Readers either see the file missing,
   the previous version, or the new version — never a torn read.
 - Crash-durable: the temp file is fsynced before rename, and the containing
-  directory is fsynced after rename. A successful `write_state` call means
-  the bytes survive a power loss.
+  directory is synchronized on a best-effort basis after rename. Power-loss
+  durability is not guaranteed on filesystems where directory sync fails.
 - `latest_seq` records the highest event seq folded into this snapshot.
   Consumers that replay must pick up at `latest_seq + 1` in the event log.
 
@@ -63,7 +64,7 @@ Each event and each snapshot carries `version: u32`. The version lives at
 the top level of each record (not only at the file level) so that mixed-
 version logs from long-running or resumed forums remain legible.
 
-- **v1 (current, Phase 1A):** the shape documented in the schemas.
+- **v1 (current):** the shape documented in the schemas.
 - **Additive / minor changes** (no version bump): adding new `EventType`
   variants, adding optional fields to an existing payload, adding optional
   fields to the state snapshot.

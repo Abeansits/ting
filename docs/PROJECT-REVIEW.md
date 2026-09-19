@@ -142,10 +142,10 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 ### OSS-02 · Working installation and releases
 
 - [x] Fix the source-install quick start: clone, enter the repository, then `cargo install --path . --locked`.
-- [ ] Publish macOS and Linux binaries with checksums.
+- [x] Publish macOS and Linux preview binaries with checksums ([v0.5.0-rc.1](https://github.com/Abeansits/ting/releases/tag/v0.5.0-rc.1)).
 - [x] Document supported platforms and the tested minimum Rust version.
 
-**Release progress:** native packaging for Linux x86-64/ARM64 and macOS Intel/Apple Silicon passed extraction, demo, export, checksum, and provenance checks in [#28](https://github.com/Abeansits/ting/pull/28). Tag-triggered releases remain drafts and require a chosen project license. Public binary publication is still pending; build artifacts do not satisfy this item.
+**Release evidence:** native packaging for Linux x86-64/ARM64 and macOS Intel/Apple Silicon passed extraction, demo, export, checksum, and provenance checks. The tagged workflow `35431782382` built the published `v0.5.0-rc.1` prerelease from `211a8d303f934dd6292104d6bf6b87e2882f6029`. All four archives and four sidecars were downloaded and verified against the tag, including embedded MIT licensing and binary hashes; the tagged Apple Silicon binary also ran locally. Public anonymous download was verified. The full live-model regression is still deferred.
 
 **Evidence:** `cargo build --release` in the current quick start does not put `ting` on `PATH`; v0.4.1 has no attached binaries.
 

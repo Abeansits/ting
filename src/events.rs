@@ -8,17 +8,13 @@
 //!   read-only tailers. Multi-writer would need a lock file; out of scope for
 //!   v0.4.
 //! - **`seq` is authoritative ordering.** `timestamp` is informational only.
-//! - **Append atomicity.** `write_all` of one JSON-line-plus-`\n` under
-//!   `PIPE_BUF` (4096) with `O_APPEND` is atomic on Linux and macOS: readers
-//!   see either zero bytes of the new line or the full line — never a split.
+//! - **Record boundaries.** Records end with `\n`. `write_all` may perform
+//!   multiple writes, so readers must buffer an incomplete trailing record.
 //! - **Consumers handle malformed lines gracefully** (skip with warning) and
 //!   hold trailing non-newline bytes as in-flight writes until `\n` arrives.
 //!
-//! Nothing in this module is wired into `protocol.rs` yet — Phase 1A ships the
-//! contract and infrastructure, Phase 1B does the integration. The crate-wide
-//! `#[allow(dead_code)]` below is intentional for this phase; Phase 1B will
-//! remove it when the protocol starts emitting events and will introduce an
-//! `EventWriter` that caches the open FD and next seq (see CONTRACT.md).
+//! The protocol emits lifecycle and evaluation events through this module.
+//! Reserved contract variants/helpers remain available for future consumers.
 #![allow(dead_code)]
 
 use anyhow::{Context, Result};
@@ -105,10 +101,9 @@ pub fn emit(forum_dir: &Path, forum_id: &str, event_type: EventType, payload: Va
 
 /// Append a single event to `<forum_dir>/dashboard-events.jsonl` and fsync.
 ///
-/// Serializes the envelope as one JSON object followed by a newline. The open
-/// uses `O_APPEND` so concurrent appends from a single writer are atomic at
-/// the kernel level; cross-process concurrent writers are not supported (see
-/// module docs).
+/// Serializes the envelope as one JSON object followed by a newline. Append
+/// mode avoids overwriting prior records. Readers buffer partial trailing
+/// records; cross-process concurrent writers are not supported.
 pub fn append_event(forum_dir: &Path, event: &DashboardEvent) -> Result<()> {
     let path = event_log_path(forum_dir);
     let mut line =
