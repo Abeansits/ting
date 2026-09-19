@@ -2,7 +2,7 @@
 
 ## Preview binaries
 
-The `v0.5.0-rc.1` release candidate is intended for trying the new workflow and
+The `v0.5.0-rc.2` release candidate is intended for trying the new workflow and
 running the later full regression. See its release notes for validation and known
 limits. Choose the archive matching your operating system and CPU:
 
@@ -14,21 +14,21 @@ limits. Choose the archive matching your operating system and CPU:
 | macOS Apple Silicon | `aarch64-apple-darwin` |
 
 Download the archive and matching `.sha256` file from the
-[preview release](https://github.com/Abeansits/ting/releases/tag/v0.5.0-rc.1). From their
+[preview release](https://github.com/Abeansits/ting/releases/tag/v0.5.0-rc.2). From their
 download directory, verify the checksum:
 
 ```sh
 # Linux
-sha256sum -c ting-0.5.0-rc.1-<target>.tar.gz.sha256
+sha256sum -c ting-0.5.0-rc.2-<target>.tar.gz.sha256
 # macOS
-shasum -a 256 -c ting-0.5.0-rc.1-<target>.tar.gz.sha256
+shasum -a 256 -c ting-0.5.0-rc.2-<target>.tar.gz.sha256
 ```
 
 Then extract and run:
 
 ```sh
-tar -xzf ting-0.5.0-rc.1-<target>.tar.gz
-cd ting-0.5.0-rc.1-<target>
+tar -xzf ting-0.5.0-rc.2-<target>.tar.gz
+cd ting-0.5.0-rc.2-<target>
 ./bin/ting --version
 ./bin/ting demo
 ```
@@ -58,7 +58,7 @@ shell cannot find `ting`. To install to a different prefix, use
 `cargo install --path . --locked --root /your/prefix` and invoke its `bin/ting`.
 
 Building from `main` can include unreleased changes. To build the preview's exact
-source, check out `v0.5.0-rc.1` before running the install command.
+source, check out `v0.5.0-rc.2` before running the install command.
 
 ## Live-run prerequisites
 
