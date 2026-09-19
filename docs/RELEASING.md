@@ -24,6 +24,10 @@ These are preview build artifacts, not a published version.
 6. Publish the draft only when the maintainer is ready. The workflow never
    publishes a release automatically.
 
+Tags with a prerelease suffix (such as `v0.5.0-rc.1`) create prerelease drafts,
+not stable releases. The first public-welcome build uses this route while the full
+live-model regression is still pending.
+
 The pipeline currently targets Ubuntu 22.04 runners for Linux builds and macOS 15
 runners for macOS builds. CI smoke tests the extracted binary on each target;
 compatibility with older operating systems is not implied. macOS binaries are

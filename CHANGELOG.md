@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc.1] - 2026-09-19
+
+Release candidate for the reliability and public-welcome milestones. Unit,
+cross-platform, packaging, and browser smoke checks have passed; a full live-model
+regression remains pending. Treat this as an early preview.
+
 ### Added
 
 - MIT license and matching package metadata, with upstream report-library notices retained.
