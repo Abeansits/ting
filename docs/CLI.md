@@ -32,7 +32,7 @@ An existing context path is read as a file; other values become literal context.
 | Flag | Behavior |
 | --- | --- |
 | `--timeout 5m` | Timeout for command participants and the manual response wait; default `5m` |
-| `--max-rounds 2` | Requested round budget; default `2`, currently may auto-extend once when agreement is very low |
+| `--max-rounds 2` | Hard ceiling on rounds; default `2`. Convergence can stop earlier, but disagreement never adds a round. |
 | `--output-format review` | Produce a prioritized findings-oriented synthesis |
 | `--dashboard` | Serve loopback dashboard, emit events, invent metrics, and score them |
 | `--no-classifier` | Skip metric invention and scoring |
@@ -40,8 +40,8 @@ An existing context path is read as a file; other values become literal context.
 | `--port 4000` | Dashboard port; default `3420` |
 | `--no-open` | Do not open the browser automatically |
 
-Strict round ceilings and resume are tracked in the [roadmap](../ROADMAP.md).
-Do not use the current round flag as a hard dollar-spend cap.
+Resume is tracked in the [roadmap](../ROADMAP.md). A round ceiling limits iterations,
+not provider tokens or dollars: each round can still make several model calls.
 
 ## Presets and custom participants
 

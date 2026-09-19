@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Make `--max-rounds` a hard ceiling, including low-agreement discussions. Final
+  metadata records whether the forum converged or exhausted its round budget.
 - Export forum and evaluation reports with embedded renderer/sanitizer assets and
   upstream notices. No CDN is required. Reports block automatic network resources
   and omit images/media from model Markdown. Correct the report's repository link.
