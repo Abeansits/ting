@@ -164,12 +164,11 @@ async fn serve_events(
                     }
                 },
                 _ = ticker.tick() => {
-                    if let Ok(Some(record)) = crate::run_status::read(&forum_dir) {
-                        if record.status.is_terminal() {
+                    if let Ok(Some(record)) = crate::run_status::read(&forum_dir)
+                        && record.status.is_terminal() {
                             yield Ok(SseEvent::default().event("run_status").data(serde_json::to_string(&record).unwrap()));
                             return;
                         }
-                    }
                     yield Ok(SseEvent::default().event("ping"));
                 }
             }
@@ -519,11 +518,19 @@ mod tests {
 
     #[tokio::test]
     async fn stopped_runner_closes_sse_with_terminal_status() {
-        for status in [crate::run_status::Status::Failed, crate::run_status::Status::Interrupted] {
+        for status in [
+            crate::run_status::Status::Failed,
+            crate::run_status::Status::Interrupted,
+        ] {
             let dir = tmp_dir("terminal-status");
             crate::run_status::write(&dir, status, Some("Runner stopped".into())).unwrap();
-            let resp = router(dir).oneshot(Request::get("/api/events").body(Body::empty()).unwrap()).await.unwrap();
-            let body = tokio::time::timeout(Duration::from_secs(2), body_bytes(resp)).await.unwrap();
+            let resp = router(dir)
+                .oneshot(Request::get("/api/events").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let body = tokio::time::timeout(Duration::from_secs(2), body_bytes(resp))
+                .await
+                .unwrap();
             let body = String::from_utf8(body.to_vec()).unwrap();
             assert!(body.contains("event: run_status"));
             assert!(body.contains(status.as_str()));

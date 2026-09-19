@@ -272,10 +272,7 @@ mod tests {
         let mut responses = HashMap::new();
         responses.insert("alice".to_string(), "Position A".to_string());
 
-        let disagreements = vec![
-            "Architecture choice".to_string(),
-            "Timeline".to_string(),
-        ];
+        let disagreements = vec!["Architecture choice".to_string(), "Timeline".to_string()];
 
         let prompt = build_dissent_prompt("Topic", &responses, &disagreements);
         assert!(prompt.contains("Architecture choice"));

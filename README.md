@@ -20,7 +20,7 @@ A multi-agent deliberation tool where any LLM, CLI tool, or human can participat
 
 ## Prerequisites
 
-- **Rust** (1.85+, edition 2024)
+- **Rust** (1.88+, edition 2024; needed only to build from source)
 - **Claude Code** (`claude` CLI) — required for synthesis generation and convergence evaluation (fire keeper internals). Also available as a participant preset, but not required as one
 - At least one participant CLI installed and authenticated: `codex`, `gemini`, `opencode`, or just use `human` for manual participation
 - Optional: `herenow` CLI for publishing HTML reports via `--publish`
@@ -28,8 +28,10 @@ A multi-agent deliberation tool where any LLM, CLI tool, or human can participat
 ## Quick Start
 
 ```bash
-# Build
-cargo build --release
+# Install from source
+git clone https://github.com/Abeansits/ting.git
+cd ting
+cargo install --path . --locked
 
 # Run a 3-model deliberation with the live dashboard
 # (opens http://127.0.0.1:3420 in your browser)
@@ -39,7 +41,7 @@ ting new "Should we use Pipecat or Vapi for voice?" \
   --participant claude \
   --dashboard
 
-# Or run without the dashboard (behaves identically to v0.3)
+# Or run without the dashboard
 ting new "Should we use Pipecat or Vapi for voice?" \
   --participant codex --participant gemini --participant claude
 
@@ -440,5 +442,8 @@ Participants (any CLI, LLM, or human)
 ```
 
 ---
+
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md),
+[the roadmap](ROADMAP.md), and [support](SUPPORT.md).
 
 <p align="center">Built on 🌍 with ❤️</p>

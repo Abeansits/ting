@@ -1,0 +1,23 @@
+name: Bug report
+description: Something in Ting is not working as expected.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the expected behavior and a minimal reproduction. Remove secrets and private prompts.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Ting version, operating system, participant CLI versions, and relevant command flags.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste a small redacted error excerpt. Entire forum directories may contain private information.
+      render: text

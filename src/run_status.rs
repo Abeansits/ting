@@ -86,9 +86,14 @@ pub fn read(forum: &Path) -> Result<Option<RunStatus>> {
 
 /// Older forums have no outcome record; require every final artifact.
 pub fn has_final_artifacts(forum: &Path) -> bool {
-    ["synthesis.md", "claims.toml", "dissent.md", "meta-summary.toml"]
-        .iter()
-        .all(|name| forum.join("final").join(name).is_file())
+    [
+        "synthesis.md",
+        "claims.toml",
+        "dissent.md",
+        "meta-summary.toml",
+    ]
+    .iter()
+    .all(|name| forum.join("final").join(name).is_file())
 }
 
 #[cfg(test)]
@@ -105,7 +110,11 @@ mod tests {
         }
         #[cfg(unix)]
         {
-            fs::write(dir.join(FILENAME), r#"{"status":"running","pid":0,"updated_at":"test"}"#).unwrap();
+            fs::write(
+                dir.join(FILENAME),
+                r#"{"status":"running","pid":0,"updated_at":"test"}"#,
+            )
+            .unwrap();
             assert_eq!(read(&dir).unwrap().unwrap().status, Status::Interrupted);
         }
         fs::remove_dir_all(dir).unwrap();

@@ -40,8 +40,13 @@ pub struct ScoreSet {
 
 impl ScoreSet {
     fn avg(&self) -> f32 {
-        (self.completeness + self.counterarguments + self.actionability
-            + self.blind_spots + self.precision + self.overall) / 6.0
+        (self.completeness
+            + self.counterarguments
+            + self.actionability
+            + self.blind_spots
+            + self.precision
+            + self.overall)
+            / 6.0
     }
 }
 
@@ -74,7 +79,12 @@ pub fn run_eval(cfg: &EvalConfig) -> Result<EvalResult> {
         eval_id = eval_id,
         topic = cfg.topic.replace('"', "\\\""),
         baseline = cfg.baseline_preset,
-        forum = cfg.forum_presets.iter().map(|p| format!("\"{}\"", p)).collect::<Vec<_>>().join(", "),
+        forum = cfg
+            .forum_presets
+            .iter()
+            .map(|p| format!("\"{}\"", p))
+            .collect::<Vec<_>>()
+            .join(", "),
         judge = cfg.judge_preset,
         created = chrono::Utc::now().to_rfc3339(),
     );
@@ -88,11 +98,7 @@ pub fn run_eval(cfg: &EvalConfig) -> Result<EvalResult> {
         config::resolve_model_id(&cfg.judge_preset)
     ));
     for p in &cfg.forum_presets {
-        meta.push_str(&format!(
-            "{} = \"{}\"\n",
-            p,
-            config::resolve_model_id(p)
-        ));
+        meta.push_str(&format!("{} = \"{}\"\n", p, config::resolve_model_id(p)));
     }
     std::fs::write(eval_dir.join("meta.toml"), &meta)?;
 
@@ -100,7 +106,10 @@ pub fn run_eval(cfg: &EvalConfig) -> Result<EvalResult> {
     eprintln!("\n=== Baseline: {} ===", cfg.baseline_preset);
     let baseline_response = run_baseline(cfg)?;
     substrate::write_atomic(&eval_dir.join("baseline.md"), &baseline_response)?;
-    eprintln!("  Baseline response saved ({} chars)", baseline_response.len());
+    eprintln!(
+        "  Baseline response saved ({} chars)",
+        baseline_response.len()
+    );
 
     // Step 2: Run forum
     eprintln!("\n=== Forum: {} ===", cfg.forum_presets.join(", "));
@@ -321,6 +330,8 @@ fn parse_score_line(output: &str, prefix: &str) -> ScoreSet {
     }
 }
 
+// This formatting boundary receives the already-computed comparison fields.
+#[allow(clippy::too_many_arguments)]
 fn build_comparison_report(
     topic: &str,
     baseline_name: &str,
@@ -410,7 +421,12 @@ fn build_comparison_report(
     )
 }
 
-fn write_scores_toml(path: &Path, scores: &Scores, baseline_first: bool, cfg: &EvalConfig) -> Result<()> {
+fn write_scores_toml(
+    path: &Path,
+    scores: &Scores,
+    baseline_first: bool,
+    cfg: &EvalConfig,
+) -> Result<()> {
     let content = format!(
         "[assignment]\n\
          response_a = \"{a}\"\n\
@@ -439,9 +455,12 @@ fn write_scores_toml(path: &Path, scores: &Scores, baseline_first: bool, cfg: &E
         b = if baseline_first { "forum" } else { "baseline" },
         bmodel = config::resolve_model_id(&cfg.baseline_preset),
         jmodel = config::resolve_model_id(&cfg.judge_preset),
-        fmodels = cfg.forum_presets.iter()
+        fmodels = cfg
+            .forum_presets
+            .iter()
             .map(|p| format!("\"{}\"", config::resolve_model_id(p)))
-            .collect::<Vec<_>>().join(", "),
+            .collect::<Vec<_>>()
+            .join(", "),
         bc = scores.baseline.completeness,
         bca = scores.baseline.counterarguments,
         ba = scores.baseline.actionability,
@@ -474,7 +493,12 @@ pub fn generate_eval_html(eval_dir: &Path) -> Result<String> {
     let eval_id = extract_toml_string(&meta, "id");
 
     // Read forum synthesis
-    let forum_synthesis = if eval_dir.join("forum").join("final").join("synthesis.md").exists() {
+    let forum_synthesis = if eval_dir
+        .join("forum")
+        .join("final")
+        .join("synthesis.md")
+        .exists()
+    {
         substrate::read_file(&eval_dir.join("forum").join("final").join("synthesis.md"))?
     } else {
         "(Forum synthesis not available)".to_string()
@@ -515,7 +539,9 @@ pub fn generate_eval_html(eval_dir: &Path) -> Result<String> {
     };
 
     let esc = |s: &str| -> String {
-        s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
     };
 
     Ok(format!(
@@ -679,7 +705,11 @@ mod tests {
             max_rounds: 1,
         };
         let error = build_forum_config(&cfg).unwrap_err();
-        assert!(error.to_string().contains("Duplicate participant name: alice"));
+        assert!(
+            error
+                .to_string()
+                .contains("Duplicate participant name: alice")
+        );
     }
 
     #[test]

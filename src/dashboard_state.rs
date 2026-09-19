@@ -306,8 +306,8 @@ mod tests {
     /// either does not exist or is a complete valid document.
     #[test]
     fn concurrent_reader_never_sees_torn_write() {
-        use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
         use std::time::Instant;
 
         let dir = Arc::new(tmp_dir("concurrent"));

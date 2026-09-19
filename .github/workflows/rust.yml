@@ -2,26 +2,51 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
   pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  quality:
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
-    - uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-    - name: Dashboard reducer tests
-      run: node --test tests/dashboard.test.cjs
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install formatting and lint toolchain
+        run: rustup toolchain install 1.92.0 --profile minimal --component rustfmt --component clippy
+      - run: cargo +1.92.0 fmt --all -- --check
+      - run: cargo +1.92.0 clippy --locked --all-targets -- -D warnings
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - run: node --test tests/dashboard.test.cjs
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rust: '1.88.0'
+          - os: ubuntu-latest
+            rust: stable
+          - os: macos-latest
+            rust: stable
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install test toolchain
+        run: rustup toolchain install '${{ matrix.rust }}' --profile minimal
+      - run: cargo +${{ matrix.rust }} test --locked
+      - run: cargo +${{ matrix.rust }} build --locked --release
+      - run: ./target/release/ting --help

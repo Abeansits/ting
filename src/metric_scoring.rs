@@ -6,7 +6,7 @@
 use crate::classifier::{self, ClassifierMetric, ClassifierMetricsFile};
 use crate::events::{self, DashboardEvent, EventType};
 use crate::substrate;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -138,8 +138,7 @@ fn validate_envelope(file: &MetricScoresFile, forum_id: &str, round: u32) -> Res
 }
 
 fn validate_scores(scores: &[MetricScore], metrics: &[ClassifierMetric]) -> Result<()> {
-    let expected: HashMap<&str, u32> =
-        metrics.iter().map(|m| (m.id.as_str(), m.scale)).collect();
+    let expected: HashMap<&str, u32> = metrics.iter().map(|m| (m.id.as_str(), m.scale)).collect();
 
     let mut seen: HashSet<&str> = HashSet::with_capacity(scores.len());
     for s in scores {
@@ -180,8 +179,8 @@ pub(crate) fn write_scores(forum_dir: &Path, file: &MetricScoresFile) -> Result<
     let final_path = dir.join(SCORES_FILENAME);
     let tmp_path = final_path.with_extension("json.tmp");
 
-    let mut body = serde_json::to_vec_pretty(file)
-        .with_context(|| "Failed to serialize MetricScoresFile")?;
+    let mut body =
+        serde_json::to_vec_pretty(file).with_context(|| "Failed to serialize MetricScoresFile")?;
     body.push(b'\n');
 
     {
@@ -271,10 +270,15 @@ where
         return Ok((existing, ScoringOutcome::Resumed));
     }
 
-    let prompt =
-        build_scoring_prompt(topic, round, &classifier_metrics.metrics, responses, synthesis);
-    let raw = invoke(&prompt)
-        .with_context(|| format!("Scoring LLM call failed for round {}", round))?;
+    let prompt = build_scoring_prompt(
+        topic,
+        round,
+        &classifier_metrics.metrics,
+        responses,
+        synthesis,
+    );
+    let raw =
+        invoke(&prompt).with_context(|| format!("Scoring LLM call failed for round {}", round))?;
     let scores = parse_scoring_response(&raw, &classifier_metrics.metrics)?;
 
     let file = MetricScoresFile {
@@ -561,7 +565,10 @@ mod tests {
         let payload = scores_payload(file.round, &file.scores);
         let event = DashboardEvent::new(1, &file.forum_id, EventType::MetricScores, payload);
         let value = serde_json::to_value(&event).unwrap();
-        let errors: Vec<String> = validator.iter_errors(&value).map(|e| e.to_string()).collect();
+        let errors: Vec<String> = validator
+            .iter_errors(&value)
+            .map(|e| e.to_string())
+            .collect();
         assert!(
             errors.is_empty(),
             "event failed schema validation: {:#?}\nvalue: {}",
@@ -718,9 +725,8 @@ mod tests {
         fs::write(scores_path(&dir, 1), body).unwrap();
         seeded.round = 1; // keep `seeded` consistent for any later assertion
 
-        let invoke = |_: &str| -> Result<String> {
-            panic!("Scoring should not invoke LLM on resume")
-        };
+        let invoke =
+            |_: &str| -> Result<String> { panic!("Scoring should not invoke LLM on resume") };
         let err = ensure_scores(
             &dir,
             &seeded.forum_id,
@@ -744,9 +750,8 @@ mod tests {
         let seeded = sample_file(1);
         write_scores(&dir, &seeded).unwrap();
 
-        let invoke = |_: &str| -> Result<String> {
-            panic!("Scoring should not invoke LLM on resume")
-        };
+        let invoke =
+            |_: &str| -> Result<String> { panic!("Scoring should not invoke LLM on resume") };
         let err = ensure_scores(
             &dir,
             "different-forum-id",
@@ -773,9 +778,8 @@ mod tests {
         let body = serde_json::to_vec_pretty(&seeded).unwrap();
         fs::write(scores_path(&dir, 1), body).unwrap();
 
-        let invoke = |_: &str| -> Result<String> {
-            panic!("Scoring should not invoke LLM on resume")
-        };
+        let invoke =
+            |_: &str| -> Result<String> { panic!("Scoring should not invoke LLM on resume") };
         let err = ensure_scores(
             &dir,
             &seeded.forum_id,
