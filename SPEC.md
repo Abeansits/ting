@@ -1,5 +1,9 @@
 # Ting — Multi-Agent Deliberation Tool
 
+> Historical design document. Some proposed policies here were never implemented.
+> For current behavior, use [the CLI reference](docs/CLI.md),
+> [the event contract](schemas/CONTRACT.md), and [the roadmap](ROADMAP.md).
+
 A substrate-independent deliberation tool where any agent (LLM, CLI tool, or human) can participate in structured, multi-turn discussions using the filesystem as a shared medium.
 
 ## Why

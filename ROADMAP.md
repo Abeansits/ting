@@ -24,7 +24,7 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 ### 0.5 · Public welcome
 
 - [x] License and complete package metadata (OSS-01; MIT selected by the maintainer).
-- [ ] Working installation instructions and downloadable binaries (OSS-02).
+- [x] Working installation instructions and downloadable preview binaries (OSS-02; [v0.5.0-rc.1](https://github.com/Abeansits/ting/releases/tag/v0.5.0-rc.1)).
 - [x] No-account `ting demo` with a representative sample forum (OSS-03; [#22](https://github.com/Abeansits/ting/pull/22)).
 - [x] Concise README, visuals, and generated illustrative output example (OSS-04; [#27](https://github.com/Abeansits/ting/pull/27)).
 - [x] Contributor guide, templates, and starter issues (OSS-05; #21, #23, #24).
@@ -35,7 +35,9 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 **Release gate:** a newcomer can explore Ting without credentials and diagnose setup before a paid run.
 
 Binary packaging is verified on four native targets in [#28](https://github.com/Abeansits/ting/pull/28).
-MIT licensing is recorded. The actual public release remains open; no version tag has been created.
+MIT licensing is recorded. The public `v0.5.0-rc.1` prerelease includes all four
+platform archives and checksums. Archive provenance matches tagged commit
+`211a8d303f934dd6292104d6bf6b87e2882f6029`; full live-model regression remains pending.
 
 ### 0.6 · Recovery and control
 
@@ -43,7 +45,7 @@ MIT licensing is recorded. The actual public release remains open; no version ta
 - [ ] Persist execution options needed for reproducible recovery.
 - [ ] Prevent stale scores from being reused after responses or rubrics change.
 - [ ] Add cancellation and distinct stop reasons: converged, stalled, budget exhausted, failed, interrupted.
-- [x] Enforce hard round limits and accurate configuration semantics (FIX-09; implemented, pending PR merge).
+- [x] Enforce hard round limits and accurate configuration semantics (FIX-09; #29 and #30).
 - [ ] Display actual discussion content and configured thresholds in the dashboard (OSS-08).
 
 **Release gate:** an interrupted forum resumes without repeating completed work or mixing old evaluations with new evidence.
