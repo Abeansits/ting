@@ -16,8 +16,8 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 - [x] Emit dashboard lifecycle events (FIX-04; merged in [#16](https://github.com/Abeansits/ting/pull/16)).
 - [x] Validate judgments and represent unavailable evaluations honestly (FIX-05; merged in [#17](https://github.com/Abeansits/ting/pull/17)).
 - [x] Correct completion status (FIX-06; merged in [#18](https://github.com/Abeansits/ting/pull/18)).
-- [x] Protect participant records (FIX-07; implemented, pending PR merge).
-- [x] Fix Unicode topic and preset truncation (FIX-08; implemented, pending PR merge).
+- [x] Protect participant records (FIX-07; [#19](https://github.com/Abeansits/ting/pull/19)).
+- [x] Fix Unicode topic and preset truncation (FIX-08; [#20](https://github.com/Abeansits/ting/pull/20)).
 
 **Release gate:** failure cases produce honest status, and completed results preserve minority objections.
 
