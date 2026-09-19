@@ -17,7 +17,7 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 - [x] Validate judgments and represent unavailable evaluations honestly (FIX-05; merged in [#17](https://github.com/Abeansits/ting/pull/17)).
 - [x] Correct completion status (FIX-06; merged in [#18](https://github.com/Abeansits/ting/pull/18)).
 - [x] Protect participant records (FIX-07; implemented, pending PR merge).
-- [ ] Fix Unicode topic truncation (FIX-08).
+- [x] Fix Unicode topic and preset truncation (FIX-08; implemented, pending PR merge).
 
 **Release gate:** failure cases produce honest status, and completed results preserve minority objections.
 

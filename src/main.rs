@@ -713,11 +713,7 @@ fn cmd_list() -> Result<()> {
             .map(|c| c.forum.topic)
             .unwrap_or_else(|_| "<error>".into());
 
-        let topic_display = if topic.len() > 35 {
-            format!("{}...", &topic[..32])
-        } else {
-            topic
-        };
+        let topic_display = abbreviate(&topic, 35);
 
         println!("{:<32} {:<10} {}", id, status, topic_display);
     }
@@ -1060,11 +1056,7 @@ fn cmd_preset_list() -> Result<()> {
     println!("{}", "-".repeat(70));
     for (name, cmd, is_custom) in &presets {
         let tag = if *is_custom { "custom" } else { "built-in" };
-        let cmd_display = if cmd.len() > 45 {
-            format!("{}...", &cmd[..42])
-        } else {
-            cmd.clone()
-        };
+        let cmd_display = abbreviate(&cmd, 45);
         println!("{:<14} {:<9} {}", name, tag, cmd_display);
     }
     println!(
@@ -1094,4 +1086,32 @@ fn cmd_preset_remove(name: &str) -> Result<()> {
     std::fs::write(&path, output)?;
     eprintln!("Preset '{}' removed", name);
     Ok(())
+}
+
+/// Shorten list cells by Unicode scalar values, never by a UTF-8 byte offset.
+fn abbreviate(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        text.to_string()
+    } else {
+        format!("{}...", text.chars().take(limit.saturating_sub(3)).collect::<String>())
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn list_abbreviations_handle_unicode_and_preserve_short_text() {
+        for limit in [35, 45] {
+            for text in ["界".repeat(60), "🦀".repeat(60), "abcé".repeat(20)] {
+                let display = abbreviate(&text, limit);
+                assert!(display.ends_with("..."));
+                assert_eq!(display.chars().count(), limit);
+            }
+            assert_eq!(abbreviate("A short topic 🦀", limit), "A short topic 🦀");
+            assert_eq!(abbreviate(&"x".repeat(limit), limit), "x".repeat(limit));
+            assert_eq!(abbreviate(&"x".repeat(limit + 1), limit), format!("{}...", "x".repeat(limit - 3)));
+        }
+    }
 }
