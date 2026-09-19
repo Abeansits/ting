@@ -158,10 +158,12 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### OSS-04 · README and examples
 
-- [ ] Lead with one sentence, a screenshot or short recording, installation, demo, and first real run.
-- [ ] Move detailed architecture and event-contract explanations into linked docs.
-- [ ] Document `eval` and review output with examples.
-- [ ] Reconcile defaults, preset commands, and dashboard claims with the current CLI.
+- [x] Lead with one sentence, a screenshot or short recording, installation, demo, and first real run.
+- [x] Move detailed architecture and event-contract explanations into linked docs.
+- [x] Document `eval` and review output with examples.
+- [x] Reconcile defaults, preset commands, and dashboard claims with the current CLI.
+
+**Implementation:** a concise README uses an actual demo screenshot and links to a CLI reference, architecture guide, and generated sample output. Sample data is explicitly illustrative. Current auto-extension, reserved config fields, and binary-only doctor checks are documented rather than implied to be stronger guarantees.
 
 **Done when:** the first screen explains what Ting does and gives a clear route to trying it.
 
