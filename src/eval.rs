@@ -52,6 +52,8 @@ pub fn evals_dir() -> PathBuf {
 
 /// Run a full eval: baseline response, forum deliberation, blind judge comparison
 pub fn run_eval(cfg: &EvalConfig) -> Result<EvalResult> {
+    // Validate participants before creating artifacts or paying for a baseline.
+    let forum_config = build_forum_config(cfg)?;
     let eval_id = format!(
         "eval-{}-{}",
         chrono::Utc::now().format("%Y-%m-%d"),
@@ -102,7 +104,6 @@ pub fn run_eval(cfg: &EvalConfig) -> Result<EvalResult> {
 
     // Step 2: Run forum
     eprintln!("\n=== Forum: {} ===", cfg.forum_presets.join(", "));
-    let forum_config = build_forum_config(cfg)?;
     let forum_path = substrate::create_forum_dir(&forum_config.forum.id)?;
     config::save(&forum_config, &forum_path.join("meta.toml"))?;
 
@@ -187,7 +188,7 @@ fn build_forum_config(cfg: &EvalConfig) -> Result<ForumConfig> {
         &uuid::Uuid::new_v4().to_string()[..8],
     );
 
-    Ok(ForumConfig {
+    let forum = ForumConfig {
         forum: ForumSection {
             id: forum_id,
             topic: cfg.topic.clone(),
@@ -206,7 +207,9 @@ fn build_forum_config(cfg: &EvalConfig) -> Result<ForumConfig> {
         },
         convergence: ConvergenceSection::default(),
         synthesis: SynthesisSection::default(),
-    })
+    };
+    config::validate(&forum)?;
+    Ok(forum)
 }
 
 /// Run blind A/B comparison. Returns (baseline_was_A, comparison_text, scores).
@@ -663,6 +666,21 @@ fn extract_toml_string(content: &str, key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn eval_rejects_duplicate_participants_before_starting() {
+        let cfg = EvalConfig {
+            topic: "Test".into(),
+            context: None,
+            baseline_preset: "unused".into(),
+            forum_presets: vec!["alice:manual".into(), "alice:manual".into()],
+            judge_preset: "unused".into(),
+            timeout: "5s".into(),
+            max_rounds: 1,
+        };
+        let error = build_forum_config(&cfg).unwrap_err();
+        assert!(error.to_string().contains("Duplicate participant name: alice"));
+    }
 
     #[test]
     fn test_parse_judge_scores_baseline_first() {

@@ -26,6 +26,7 @@ pub struct RunOptions {
 /// Supports auto-extend: if convergence score < 5 at max_rounds, runs one extra round
 /// to avoid premature termination while capping sycophancy from over-deliberation.
 pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOptions) -> Result<()> {
+    config::validate(forum_config)?;
     use crate::run_status::{self, Status};
     run_status::write(forum_path, Status::Running, None)?;
     let result = run_forum_inner(forum_config, forum_path, opts).and_then(|rounds_used| {
@@ -891,6 +892,23 @@ fn is_review_mode(config: &ForumConfig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn response_write_failure_aborts_without_a_response_event() {
+        let dir = std::env::temp_dir().join(format!("ting-test-response-write-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("round-1/alice.md")).unwrap();
+        let mut config = make_test_config("A write failure");
+        config.participants.names = vec!["alice".into()];
+        config.participants.configs = HashMap::from([("alice".into(), ParticipantConfig {
+            participant_type: "command".into(),
+            command: Some("printf response".into()),
+        })]);
+        let error = invoke_participants(&config, "Prompt", &dir, 1, true).unwrap_err();
+        assert!(error.to_string().contains("alice"));
+        assert!(error.to_string().contains("Aborting"));
+        assert!(!events::event_log_path(&dir).exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn forum_emits_complete_lifecycle_only_when_enabled() {

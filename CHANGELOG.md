@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject duplicate participant names before a run starts, including evaluation
+  callers. Response-write failures abort instead of reporting a response that
+  was never saved.
 - Persist run outcomes separately from final artifacts. Failed finalization no
   longer appears complete; `status`, `list`, and `result` use the outcome record.
   The browser and TUI handle failure events, and the browser recognizes a dead

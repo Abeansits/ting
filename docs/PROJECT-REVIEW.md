@@ -88,8 +88,10 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### FIX-07 · P2 · Protect participant records
 
-- [ ] Propagate response-write failures instead of ignoring them.
-- [ ] Reject duplicate participant names before creating a forum or starting commands.
+- [x] Propagate response-write failures instead of ignoring them.
+- [x] Reject duplicate participant names before creating a forum or starting commands.
+
+**Implementation:** config validation rejects duplicate names, and the protocol also validates direct callers. A regression forces response persistence to fail and verifies that the round aborts without emitting a response event.
 
 **Evidence:** `src/protocol.rs::invoke_participants` ignores `write_atomic` errors. `src/main.rs::cmd_new` accumulates duplicate names while overwriting their configuration-map entries.
 
