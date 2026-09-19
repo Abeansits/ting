@@ -319,7 +319,7 @@ Turning on `--dashboard` activates four cooperating pieces:
    Monotonic `seq` is the authoritative ordering key. The runtime
    emits `forum_started`, `round_started`, `participant_response`,
    `classifier_metrics`, `metric_scores`, `synthesis`, `convergence`,
-   and `forum_complete`. `claims` and `alignment` remain reserved.
+   `forum_complete`, and `forum_failed`. `claims` and `alignment` remain reserved.
    JSON Schemas, a companion `dashboard-state.json` snapshot format,
    and reader/writer guarantees live in [`schemas/`](./schemas).
 
@@ -391,6 +391,7 @@ call, no server, no added disk state. Upgrade safely without opting in.
 ```
 ~/.ting/sessions/<forum-id>/
   meta.toml
+  run-status.json            # running/completed/failed outcome; runner PID
   dashboard-events.jsonl      # append-only event stream (with --dashboard)
   round-0/
     metrics.json              # classifier axes         (with --dashboard)
@@ -415,6 +416,12 @@ call, no server, no added disk state. Upgrade safely without opting in.
 ```
 
 ## Architecture
+
+Completion is recorded only after synthesis, claims, dissent, and summary metadata
+are written. Failed runs keep their partial artifacts for inspection, but `ting
+result` does not present them as completed output. On Unix, a running record whose
+process has exited is shown as interrupted. Older sessions without a run-status
+record count as complete only when all four final artifacts exist.
 
 ```
 Participants (any CLI, LLM, or human)

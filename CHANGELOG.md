@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Persist run outcomes separately from final artifacts. Failed finalization no
+  longer appears complete; `status`, `list`, and `result` use the outcome record.
+  The browser and TUI handle failure events, and the browser recognizes a dead
+  runner as interrupted when served again. Legacy completion requires all four
+  final artifacts rather than only a synthesis file.
 - Reject missing, duplicate, malformed, non-finite, and out-of-range convergence
   and alignment scores instead of substituting 5. Judgment calls retry once;
   exhausted convergence evaluation aborts with an explicit error, while optional

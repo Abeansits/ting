@@ -133,6 +133,9 @@
       case "forum_complete":
         state.status = "completed";
         break;
+      case "forum_failed":
+        state.status = "failed";
+        break;
       default:
         // claims / alignment are reflected via participant_response + synthesis.
         // Any unknown type is ignored so older clients don't break.
@@ -212,7 +215,7 @@
     el.roundsGrid.replaceChildren(...rounds.map(r => {
       const row = document.createElement("div");
       row.className = "round-row";
-      if (r.round === currentRound && state.status !== "completed") {
+      if (r.round === currentRound && state.status === "in_progress") {
         row.classList.add("current");
       }
 
@@ -416,11 +419,25 @@
     setConnection("connecting");
     const es = new EventSource("/api/events");
 
+    es.addEventListener("run_status", ev => {
+      try {
+        const record = JSON.parse(ev.data);
+        state.status = record.status === "running" ? "in_progress" : record.status;
+        render();
+        if (["completed", "failed", "interrupted"].includes(state.status)) {
+          es.close();
+          setConnection("ended");
+        }
+      } catch (err) {
+        console.error("run status parse error", err);
+      }
+    });
+
     es.addEventListener("init", ev => {
       try {
         applyState(JSON.parse(ev.data));
         render();
-        if (state.status === "completed") {
+        if (["completed", "failed", "interrupted"].includes(state.status)) {
           es.close();
           setConnection("ended");
         } else {
@@ -437,7 +454,7 @@
         applyEvent(event);
         render();
         setConnection("live");
-        if (event.type === "forum_complete") {
+        if (event.type === "forum_complete" || event.type === "forum_failed") {
           es.close();
           setConnection("ended");
         }
@@ -451,7 +468,7 @@
     es.onerror = () => {
       // If the forum already completed, the close is expected; otherwise
       // EventSource auto-reconnects — surface the blip and let it retry.
-      if (state.status === "completed") {
+      if (["completed", "failed", "interrupted"].includes(state.status)) {
         setConnection("ended");
         es.close();
       } else {

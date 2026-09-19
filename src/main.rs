@@ -7,6 +7,7 @@ mod events;
 mod metric_scoring;
 mod protocol;
 mod report;
+mod run_status;
 mod server;
 mod substrate;
 mod synthesis;
@@ -473,11 +474,10 @@ fn cmd_serve(forum_id: &str, port: u16, no_open: bool) -> Result<()> {
         anyhow::bail!("Forum not found: {}", forum_id);
     }
 
-    let status = if substrate::is_completed(&forum_path) {
-        "completed"
-    } else {
-        "in progress"
-    };
+    let record = run_status::read(&forum_path)?;
+    let status = record.as_ref().map(|record| record.status.as_str()).unwrap_or(
+        if substrate::is_completed(&forum_path) { "completed" } else { "unknown (legacy forum)" }
+    );
     eprintln!();
     eprintln!("  Forum   {}", forum_id);
     eprintln!("  Status  {}", status);
@@ -564,6 +564,7 @@ fn cmd_status(forum_id: &str, round: Option<u32>) -> Result<()> {
     let cfg = config::load(&forum_path.join("meta.toml"))?;
     let current = substrate::current_round(&forum_path);
     let completed = substrate::is_completed(&forum_path);
+    let record = run_status::read(&forum_path)?;
 
     // Detailed view of a specific round
     if let Some(r) = round {
@@ -575,7 +576,9 @@ fn cmd_status(forum_id: &str, round: Option<u32>) -> Result<()> {
     println!("Topic:  {}", cfg.forum.topic);
     println!(
         "Status: {}",
-        if completed {
+        if let Some(record) = &record {
+            record.status.as_str().to_string()
+        } else if completed {
             "completed".to_string()
         } else {
             format!(
@@ -584,6 +587,9 @@ fn cmd_status(forum_id: &str, round: Option<u32>) -> Result<()> {
             )
         }
     );
+    if let Some(error) = record.as_ref().and_then(|record| record.error.as_ref()) {
+        println!("Reason: {}", error);
+    }
     println!();
 
     for r in 1..=current {
@@ -699,7 +705,9 @@ fn cmd_list() -> Result<()> {
 
     for (id, path) in &forums {
         let completed = substrate::is_completed(path);
-        let status = if completed { "done" } else { "active" };
+        let record = run_status::read(path)?;
+        let status = record.as_ref().map(|record| record.status.as_str())
+            .unwrap_or(if completed { "completed" } else { "unknown" });
 
         let topic = config::load(&path.join("meta.toml"))
             .map(|c| c.forum.topic)
@@ -721,7 +729,7 @@ fn cmd_result(forum_id: &str, html: bool, publish: bool) -> Result<()> {
     let forum_path = substrate::forum_dir(forum_id);
     let final_dir = forum_path.join("final");
 
-    if !final_dir.exists() {
+    if !substrate::is_completed(&forum_path) {
         anyhow::bail!(
             "Forum '{}' has not completed yet. Run: ting status {}",
             forum_id,

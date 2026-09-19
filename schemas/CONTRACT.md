@@ -96,3 +96,16 @@ version bump.
   the free-function `append_event` is enough; Phase 1B will introduce a
   writer with cached `seq` and open FD when the protocol starts emitting at
   per-event frequency.
+# Run outcomes
+
+`run-status.json` records the runner PID and running/completed/failed outcome,
+independently of partial final artifacts. Rust readers classify a running record
+whose Unix PID no longer exists as interrupted. This is local-process detection;
+copied sessions and PID reuse are not a supported lease mechanism.
+
+`forum_failed` is an additive event with an `error` string. Consumers should show
+a failed terminal state and stop waiting. `forum_complete` is emitted only after
+the final artifacts and completed outcome have been written. The browser SSE
+transport can additionally send a `run_status` frame from the outcome record,
+allowing dead-runner detection without mutating the event log. Older clients may
+skip the new event under the existing unknown-event rule.

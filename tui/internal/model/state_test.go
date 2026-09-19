@@ -71,6 +71,16 @@ func TestApply_ForumComplete(t *testing.T) {
 	}
 }
 
+func TestApply_ForumFailed(t *testing.T) {
+	s := NewState("")
+	if err := s.Apply(mustEvent(t, 1, EventTypeForumFailed, `{"error":"Finalization failed"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if s.Status != StatusFailed {
+		t.Errorf("Status = %q, want failed", s.Status)
+	}
+}
+
 func TestApply_IdempotentOnLowerSeq(t *testing.T) {
 	s := NewState("")
 	s.LatestSeq = 10
