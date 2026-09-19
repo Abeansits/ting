@@ -6,6 +6,7 @@ const MARKED: &str = include_str!("../vendor/report/marked.min.js");
 const PURIFY: &str = include_str!("../vendor/report/purify.min.js");
 const MARKED_LICENSE: &str = include_str!("../vendor/report/marked-LICENSE.md");
 const PURIFY_LICENSE: &str = include_str!("../vendor/report/dompurify-LICENSE");
+const TING_LICENSE: &str = include_str!("../LICENSE");
 
 /// Shared sanitizer for standalone reports and the local dashboard.
 pub const RENDER_JS: &str = r#"
@@ -31,7 +32,7 @@ pub fn scripts() -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "<script>{MARKED}</script>\n<script>{purify}</script>\n<script>{RENDER_JS}</script>\n<!--\nThird-party notices\n{MARKED_LICENSE}\n{PURIFY_LICENSE}\n-->"
+        "<script>{MARKED}</script>\n<script>{purify}</script>\n<script>{RENDER_JS}</script>\n<!--\nTing license\n{TING_LICENSE}\nThird-party notices\n{MARKED_LICENSE}\n{PURIFY_LICENSE}\n-->"
     )
 }
 
@@ -44,7 +45,7 @@ mod tests {
         for script in [MARKED, PURIFY, RENDER_JS] {
             assert!(!script.to_ascii_lowercase().contains("</script"));
         }
-        for license in [MARKED_LICENSE, PURIFY_LICENSE] {
+        for license in [TING_LICENSE, MARKED_LICENSE, PURIFY_LICENSE] {
             assert!(!license.contains("-->"));
         }
         let html = scripts();
