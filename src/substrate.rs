@@ -480,22 +480,38 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ting-test-deadline-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let marker = dir.join("survived");
+        let ready = dir.join("ready");
+        let release = dir.join("release");
         let mut cmd = std::process::Command::new("sh");
+        // A fixed sleep before writing the marker races with a delayed test
+        // thread. Instead, the descendant can write only after invoke_process
+        // returns and the test explicitly releases it. Redirect its pipes so
+        // an escaped descendant cannot prevent the parent from being reaped.
         cmd.args([
             "-c",
-            "sh -c 'sleep 1; printf survived > \"$1\"' sh \"$1\" & wait",
+            r#"sh -c 'printf ready > "$2"; while [ ! -e "$3" ]; do sleep 0.01; done; printf survived > "$1"' sh "$1" "$2" "$3" </dev/null >/dev/null 2>&1 & wait"#,
             "sh",
         ])
-        .arg(&marker);
+        .arg(&marker)
+        .arg(&ready)
+        .arg(&release);
 
         let started = Instant::now();
         let error =
-            invoke_process(cmd, None, Duration::from_millis(100), "fake model").unwrap_err();
+            invoke_process(cmd, None, Duration::from_millis(250), "fake model").unwrap_err();
         assert!(error.to_string().contains("timed out"));
         assert!(error.to_string().contains("fake model"));
         assert!(started.elapsed() < Duration::from_secs(3));
+        fs::write(&release, "go").unwrap();
+        assert!(
+            ready.exists(),
+            "descendant did not start; cleanup was not exercised"
+        );
         std::thread::sleep(Duration::from_millis(1200));
-        assert!(!marker.exists(), "descendant survived the deadline");
+        assert!(
+            !marker.exists(),
+            "descendant survived after the runner returned"
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 
