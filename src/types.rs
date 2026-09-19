@@ -52,9 +52,10 @@ pub struct TimingSection {
     pub round_timeout: String,
     #[serde(default = "default_participant_timeout")]
     pub participant_timeout: String,
-    #[serde(default)]
+    // Read historical generated defaults, but do not advertise retired controls.
+    #[serde(default, skip_serializing)]
     pub quorum: u32,
-    #[serde(default = "default_late_policy")]
+    #[serde(default = "default_late_policy", skip_serializing)]
     pub late_policy: String,
 }
 
@@ -124,7 +125,8 @@ pub struct SynthesisSection {
     pub model: String,
     #[serde(default)]
     pub command: Option<String>,
-    #[serde(default = "default_max_prior_context")]
+    // Compatibility-only field; no token limiter was implemented for this knob.
+    #[serde(default = "default_max_prior_context", skip_serializing)]
     pub max_prior_context: u32,
 }
 

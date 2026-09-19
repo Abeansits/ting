@@ -25,7 +25,7 @@ pub struct RunOptions {
 /// Run a complete forum deliberation through the modified Delphi protocol.
 /// The configured maximum is a hard ceiling; disagreement never adds rounds.
 pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOptions) -> Result<()> {
-    config::validate(forum_config)?;
+    config::validate_for_run(forum_config)?;
     use crate::run_status::{self, Status};
     run_status::write(forum_path, Status::Running, None)?;
     let result = run_forum_inner(forum_config, forum_path, opts).and_then(|rounds_used| {
@@ -437,7 +437,7 @@ fn invoke_participants(
         // A requested participant that errors mid-round is not optional input —
         // silently dropping it would produce a synthesis that misleads the user
         // about whose voice was in the room. Abort so they can investigate and
-        // re-run. Manual participant timeouts continue to honor `late_policy`.
+        // re-run. Missing manual responses are reported after their wait expires.
         if !failures.is_empty() {
             anyhow::bail!(
                 "Aborting round {round}: {n} requested participant(s) failed and would be silently dropped:\n  - {list}",

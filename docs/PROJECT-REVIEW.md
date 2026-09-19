@@ -110,11 +110,11 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### FIX-09 · P2 · Make configuration promises accurate
 
-- [ ] Implement or remove unused `quorum`, `late_policy`, convergence `policy`, and `max_prior_context` settings.
-- [ ] Reject unsupported values rather than accepting ineffective configuration.
+- [x] Retire unused `quorum`, `late_policy`, and `max_prior_context` controls; validate the implemented convergence policy.
+- [x] Reject unsupported values rather than accepting ineffective configuration.
 - [x] Make `--max-rounds` a hard ceiling (automatic extension removed).
 
-**Round-budget progress:** low convergence can no longer add a round beyond the requested maximum. Final metadata distinguishes `converged` and `budget_exhausted`; early convergence still stops before a larger ceiling. Unused config policy cleanup remains open.
+**Implementation:** low convergence can no longer add a round beyond the requested maximum. Final metadata distinguishes `converged` and `budget_exhausted`; early convergence still stops before a larger ceiling. Retired controls are omitted from new metadata. Their historical defaults remain parseable, while nondefault retired values and unsupported protocol/policy values fail before execution. Read-only inspection remains compatible. Invalid, zero, and overflowing timeouts fail early.
 
 **Done when:** documented settings have observable, tested behavior and users can reliably cap a run.
 

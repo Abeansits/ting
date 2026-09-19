@@ -65,6 +65,61 @@ pub fn validate(config: &ForumConfig) -> Result<()> {
     Ok(())
 }
 
+/// Validate executable policy separately so historical sessions remain readable.
+pub fn validate_for_run(config: &ForumConfig) -> Result<()> {
+    validate(config)?;
+    anyhow::ensure!(
+        config.forum.protocol == "delphi-crossexam",
+        "Unsupported forum protocol: {}",
+        config.forum.protocol
+    );
+    anyhow::ensure!(
+        config.convergence.policy == "llm-judge",
+        "Unsupported convergence policy: {}",
+        config.convergence.policy
+    );
+    anyhow::ensure!(
+        config.convergence.min_rounds > 0,
+        "convergence min_rounds must be > 0"
+    );
+    let legacy_timing = TimingSection::default();
+    anyhow::ensure!(
+        config.timing.quorum == legacy_timing.quorum,
+        "timing.quorum is retired and was not implemented; remove the field before running"
+    );
+    anyhow::ensure!(
+        config.timing.late_policy == legacy_timing.late_policy,
+        "timing.late_policy is retired and was not implemented; remove the field before running"
+    );
+    anyhow::ensure!(
+        config.synthesis.max_prior_context == SynthesisSection::default().max_prior_context,
+        "synthesis.max_prior_context is retired and was not implemented; remove the field before running"
+    );
+    for (name, raw) in [
+        ("round_timeout", &config.timing.round_timeout),
+        ("participant_timeout", &config.timing.participant_timeout),
+    ] {
+        let duration = parse_duration(raw).with_context(|| format!("Invalid {name}"))?;
+        anyhow::ensure!(!duration.is_zero(), "{name} must be greater than zero");
+        anyhow::ensure!(
+            std::time::Instant::now().checked_add(duration).is_some(),
+            "{name} is too large for this platform"
+        );
+    }
+    for (name, participant) in &config.participants.configs {
+        if participant.participant_type == "command" {
+            anyhow::ensure!(
+                participant
+                    .command
+                    .as_ref()
+                    .is_some_and(|command| !command.trim().is_empty()),
+                "Command participant '{name}' requires a nonempty command"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Validate an identifier (participant name or forum ID) to prevent path traversal.
 /// Must match [a-z0-9_-], max 64 chars, no path separators.
 fn validate_id(id: &str, label: &str) -> Result<()> {
@@ -97,7 +152,9 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
         let n: u64 = mins
             .parse()
             .with_context(|| format!("Invalid duration: {}", s))?;
-        Ok(Duration::from_secs(n * 60))
+        Ok(Duration::from_secs(
+            n.checked_mul(60).context("Duration is too large")?,
+        ))
     } else if let Some(secs) = s.strip_suffix('s') {
         let n: u64 = secs
             .parse()
@@ -107,7 +164,9 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
         let n: u64 = hours
             .parse()
             .with_context(|| format!("Invalid duration: {}", s))?;
-        Ok(Duration::from_secs(n * 3600))
+        Ok(Duration::from_secs(
+            n.checked_mul(3600).context("Duration is too large")?,
+        ))
     } else {
         anyhow::bail!(
             "Invalid duration format '{}' (expected e.g. '5m', '30s', '1h')",
@@ -366,6 +425,78 @@ fn extract_flag_value(cmd: &str, flag: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn legacy_config() -> ForumConfig {
+        toml::from_str(
+            r#"
+[forum]
+id = "legacy-test"
+topic = "Compatibility"
+created = "2026-09-19T00:00:00Z"
+max_rounds = 2
+protocol = "delphi-crossexam"
+[participants]
+names = ["human"]
+[participants.human]
+type = "manual"
+[timing]
+quorum = 0
+late_policy = "include_next"
+[synthesis]
+max_prior_context = 4000
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn historical_defaults_are_readable_but_retired_knobs_are_not_written() {
+        let cfg = legacy_config();
+        validate_for_run(&cfg).unwrap();
+        let serialized = toml::to_string(&cfg).unwrap();
+        for retired in ["quorum", "late_policy", "max_prior_context"] {
+            assert!(!serialized.contains(retired));
+        }
+        let round_trip: ForumConfig = toml::from_str(&serialized).unwrap();
+        validate_for_run(&round_trip).unwrap();
+    }
+
+    #[test]
+    fn unsupported_runtime_policies_do_not_block_historical_inspection() {
+        for field in [
+            "protocol",
+            "policy",
+            "quorum",
+            "late_policy",
+            "max_prior_context",
+        ] {
+            let mut cfg = legacy_config();
+            match field {
+                "protocol" => cfg.forum.protocol = "unsupported".into(),
+                "policy" => cfg.convergence.policy = "unanimous".into(),
+                "quorum" => cfg.timing.quorum = 1,
+                "late_policy" => cfg.timing.late_policy = "discard".into(),
+                "max_prior_context" => cfg.synthesis.max_prior_context = 200,
+                _ => unreachable!(),
+            }
+            validate(&cfg).unwrap();
+            assert!(
+                validate_for_run(&cfg).is_err(),
+                "accepted unsupported {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_timeouts_fail_before_running() {
+        assert!(parse_duration("18446744073709551615h").is_err());
+        assert!(parse_duration("18446744073709551615m").is_err());
+        for value in ["0s", "invalid", "18446744073709551615s"] {
+            let mut cfg = legacy_config();
+            cfg.timing.participant_timeout = value.into();
+            assert!(validate_for_run(&cfg).is_err(), "accepted {value}");
+        }
+    }
 
     #[test]
     fn test_parse_duration() {

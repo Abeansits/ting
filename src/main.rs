@@ -417,7 +417,7 @@ fn cmd_new(
     };
 
     // Validate before creating anything on disk
-    config::validate(&forum_config)?;
+    config::validate_for_run(&forum_config)?;
 
     // Create forum directory and save config
     let forum_path = substrate::create_forum_dir(&id)?;

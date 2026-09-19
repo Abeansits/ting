@@ -43,7 +43,7 @@ The license decision and actual public release remain open; no version tag has b
 - [ ] Persist execution options needed for reproducible recovery.
 - [ ] Prevent stale scores from being reused after responses or rubrics change.
 - [ ] Add cancellation and distinct stop reasons: converged, stalled, budget exhausted, failed, interrupted.
-- [ ] Enforce hard round limits and accurate configuration semantics (FIX-09).
+- [x] Enforce hard round limits and accurate configuration semantics (FIX-09; implemented, pending PR merge).
 - [ ] Display actual discussion content and configured thresholds in the dashboard (OSS-08).
 
 **Release gate:** an interrupted forum resumes without repeating completed work or mixing old evaluations with new evidence.
