@@ -764,9 +764,7 @@ fn cmd_result(forum_id: &str, html: bool, publish: bool) -> Result<()> {
     let dissent_path = final_dir.join("dissent.md");
     if dissent_path.exists() {
         let content = substrate::read_file(&dissent_path)?;
-        if !content.contains("No unresolved disagreements") {
-            println!("\n---\n\n{}", content);
-        }
+        println!("\n---\n\n{}", content);
     }
 
     let meta_path = final_dir.join("meta-summary.toml");

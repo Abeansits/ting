@@ -164,7 +164,7 @@ impl std::fmt::Display for Stage {
 
 #[derive(Debug, Clone)]
 pub enum ConvergenceResult {
-    Converged { score: f32, summary: String },
+    Converged { score: f32, summary: String, key_disagreements: Vec<String> },
     Divergent { score: f32, key_disagreements: Vec<String> },
 }
 
