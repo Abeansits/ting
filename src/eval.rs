@@ -217,7 +217,7 @@ fn build_forum_config(cfg: &EvalConfig) -> Result<ForumConfig> {
         convergence: ConvergenceSection::default(),
         synthesis: SynthesisSection::default(),
     };
-    config::validate(&forum)?;
+    config::validate_for_run(&forum)?;
     Ok(forum)
 }
 

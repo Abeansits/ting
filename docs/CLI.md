@@ -152,6 +152,12 @@ settings for a run. Normal `ting new` creates it automatically. Editing it durin
 run does not reconfigure the in-memory execution.
 
 The default convergence threshold is 7 on a 1–10 agreement scale, with a minimum
-of two rounds. Current config also serializes reserved fields such as `quorum`,
-`late_policy`, and `max_prior_context`; these do not yet implement configurable
-policies. See FIX-09 in the [review backlog](PROJECT-REVIEW.md).
+of two rounds for early stopping. The implemented protocol is `delphi-crossexam`
+and the implemented convergence policy is `llm-judge`; other values are rejected
+before a run starts. Timeouts must be positive and representable on the platform.
+
+`quorum`, `late_policy`, and `max_prior_context` were previously written but never
+implemented. They are retired and no longer emitted in new configuration. Old
+generated defaults (`0`, `include_next`, and `4000`) remain readable for compatibility;
+they do not enable a policy or token cap. Nondefault values must be removed before
+execution. Historical sessions remain inspectable even with unsupported policies.

@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retire unused quorum, late-response, and prior-context controls from generated
+  metadata. Unsupported custom policy values now fail before execution, while
+  historical sessions remain readable. Validate timeouts without integer overflow.
 - Make `--max-rounds` a hard ceiling, including low-agreement discussions. Final
   metadata records whether the forum converged or exhausted its round budget.
 - Export forum and evaluation reports with embedded renderer/sanitizer assets and
