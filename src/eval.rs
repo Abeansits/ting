@@ -516,7 +516,7 @@ pub fn generate_eval_html(eval_dir: &Path) -> Result<String> {
             .lines()
             .skip_while(|l| !l.starts_with(&format!("[{}]", section)))
             .find(|l| l.starts_with(key))
-            .and_then(|l| l.split('=').nth(1))
+            .and_then(|l| l.split_once('=').map(|(_, value)| value))
             .map(|v| esc(v.trim()))
             .unwrap_or_else(|| "—".to_string())
     };
