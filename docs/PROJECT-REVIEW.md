@@ -52,9 +52,11 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### FIX-04 · P1 · Wire dashboard lifecycle events
 
-- [ ] Emit forum-start, round-start, and participant-response events during execution.
-- [ ] Provide initial metadata through events or a production snapshot.
-- [ ] Verify reconnect/replay produces the same state as observing the run live.
+- [x] Emit forum-start, round-start, and participant-response events during execution.
+- [x] Provide initial metadata through events.
+- [x] Verify reconnect/replay produces the same state as observing the run live.
+
+**Implementation:** a fake-model forum regression validates emitted events against the schema; browser reducer tests cover log replay and snapshot prefixes. Manual response notifications occur as files are collected. Response-write errors propagate before an event can claim that a command participant responded.
 
 **Evidence:** `src/protocol.rs` emits only part of the existing event contract. The runtime does not write the snapshot that could otherwise initialize missing metadata.
 

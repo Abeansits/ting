@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Emit forum-start, round-start, and participant-response dashboard events from
+  real runs, including human responses. Browser replay ignores already-applied
+  sequence numbers, preventing duplicate convergence history after reconnects.
 - Give each participant an explicit forum identity, including aliases using the
   same model. Save personalized inputs under `round-N/prompts/<name>.md` and
   point human participants to their own prompt so cross-exam assignments are

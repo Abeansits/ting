@@ -316,11 +316,10 @@ Turning on `--dashboard` activates four cooperating pieces:
 1. **JSONL event log.** The Fire Keeper emits an append-only event stream
    to `~/.ting/sessions/<forum-id>/dashboard-events.jsonl` with a
    versioned envelope (`seq`, `forum_id`, `timestamp`, `type`, `payload`).
-   Monotonic `seq` is the authoritative ordering key. The v0.4 runtime
-   emits five event types: `classifier_metrics`, `metric_scores`,
-   `synthesis`, `convergence`, and `forum_complete`; five more
-   (`forum_started`, `round_started`, `participant_response`, `claims`,
-   `alignment`) are reserved by the contract for a future phase.
+   Monotonic `seq` is the authoritative ordering key. The runtime
+   emits `forum_started`, `round_started`, `participant_response`,
+   `classifier_metrics`, `metric_scores`, `synthesis`, `convergence`,
+   and `forum_complete`. `claims` and `alignment` remain reserved.
    JSON Schemas, a companion `dashboard-state.json` snapshot format,
    and reader/writer guarantees live in [`schemas/`](./schemas).
 
@@ -340,8 +339,8 @@ Turning on `--dashboard` activates four cooperating pieces:
    SSE stream at `GET /api/events` that replays the log and then
    forwards live events. A compacted snapshot is also available at
    `GET /api/state` when a `dashboard-state.json` snapshot exists on
-   disk (404 otherwise; clients can always seed from the SSE `init`
-   frame). The UI renders metric bars, a convergence gauge, and a
+   disk (404 otherwise; clients replay the event log when there is no
+   snapshot). The UI renders metric bars, a convergence gauge, and a
    synthesis feed in pure CSS; no charting library. The Dissent Axis
    is always pinned to the top of the metrics panel.
 

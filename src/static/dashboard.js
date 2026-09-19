@@ -4,6 +4,7 @@
   const GAUGE_ARC_LENGTH = Math.PI * 80;
 
   const state = {
+    latestSeq: 0,
     forumId: null,
     topic: null,
     participants: [],
@@ -53,6 +54,7 @@
   }
 
   function applyState(snapshot) {
+    state.latestSeq = snapshot.latest_seq || 0;
     state.forumId = snapshot.forum_id;
     state.topic = snapshot.topic;
     state.participants = snapshot.participants || [];
@@ -85,6 +87,9 @@
   }
 
   function applyEvent(ev) {
+    // SSE reconnects replay the log. A snapshot may already include its prefix.
+    if (ev.seq <= state.latestSeq) return;
+    state.latestSeq = ev.seq;
     const p = ev.payload || {};
     switch (ev.type) {
       case "forum_started":
