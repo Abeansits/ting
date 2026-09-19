@@ -51,3 +51,14 @@ test("failed forums remain failed when their log is replayed", () => {
   reducer.applyEvent({ seq: 1, type: "forum_started", payload: {} });
   assert.equal(reducer.state.status, "failed");
 });
+
+test("a resumed attempt clears obsolete rounds and scores", () => {
+  const reducer = loadReducer();
+  reducer.applyEvent({ seq: 1, type: "round_started", payload: { round: 3, stage: "revision" } });
+  reducer.applyEvent({ seq: 2, type: "convergence", payload: { round: 3, score: 8 } });
+  reducer.applyEvent({ seq: 3, type: "forum_failed", payload: {} });
+  reducer.applyEvent({ seq: 4, type: "forum_started", payload: { topic: "Resumed", participants: ["alice"], max_rounds: 2 } });
+  assert.equal(reducer.state.rounds.size, 0);
+  assert.equal(reducer.state.convergenceHistory.length, 0);
+  assert.equal(reducer.state.status, "in_progress");
+});

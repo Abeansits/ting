@@ -152,7 +152,7 @@ pub(crate) fn strip_code_fences(s: &str) -> &str {
     body.trim().strip_suffix("```").unwrap_or(body).trim()
 }
 
-fn validate_metrics(metrics: &[ClassifierMetric]) -> Result<()> {
+pub(crate) fn validate_metrics(metrics: &[ClassifierMetric]) -> Result<()> {
     let dissent_count = metrics.iter().filter(|m| m.id == DISSENT_AXIS_ID).count();
     if dissent_count == 0 {
         bail!(
@@ -296,6 +296,8 @@ pub enum ClassifierOutcome {
 /// prompt, parses the response, writes `metrics.json`, appends the
 /// `classifier_metrics` event, and returns `Fresh`. The closure is injected so
 /// tests can stub the LLM.
+// Low-level artifact reuse. The protocol's checkpoint boundary fingerprints
+// generating inputs and archives stale artifacts before calling this helper.
 pub fn ensure_classifier<F>(
     forum_dir: &Path,
     forum_id: &str,

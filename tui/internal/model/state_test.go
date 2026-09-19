@@ -81,6 +81,17 @@ func TestApply_ForumFailed(t *testing.T) {
 	}
 }
 
+func TestApply_ResumeClearsPriorAttempt(t *testing.T) {
+	s := NewState("")
+	_ = s.Apply(mustEvent(t, 1, EventTypeRoundStarted, `{"round":3,"stage":"revision"}`))
+	_ = s.Apply(mustEvent(t, 2, EventTypeConvergence, `{"round":3,"score":8}`))
+	_ = s.Apply(mustEvent(t, 3, EventTypeForumFailed, `{"error":"failed"}`))
+	_ = s.Apply(mustEvent(t, 4, EventTypeForumStarted, `{"topic":"Resumed","participants":["a"],"max_rounds":2}`))
+	if len(s.Rounds) != 0 || s.ConvergenceScore != nil || s.Status != StatusInProgress {
+		t.Fatalf("stale attempt state retained: %+v", s)
+	}
+}
+
 func TestApply_IdempotentOnLowerSeq(t *testing.T) {
 	s := NewState("")
 	s.LatestSeq = 10

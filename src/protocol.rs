@@ -1,14 +1,17 @@
 use crate::events::{self, EventType};
-use crate::{classifier, config, convergence, metric_scoring, substrate, synthesis, types::*};
-use anyhow::Result;
+use crate::{
+    checkpoint, classifier, config, convergence, metric_scoring, substrate, synthesis, types::*,
+};
+use anyhow::{Context, Result};
 use rand::seq::SliceRandom;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Runtime flags that shape a single `run_forum` invocation. Not persisted to
-/// `meta.toml` — resume semantics come from on-disk artifacts.
-#[derive(Debug, Clone, Default)]
+/// Execution flags persisted separately from forum metadata for recovery.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunOptions {
     /// When true, run the pre-round classifier before round 1. Controlled by
     /// `--dashboard` minus `--no-classifier` at the CLI layer.
@@ -22,11 +25,62 @@ pub struct RunOptions {
     pub emit_events: bool,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SavedOptions {
+    version: u32,
+    options: RunOptions,
+}
+
+pub fn saved_options(forum: &Path) -> Result<RunOptions> {
+    let bytes = std::fs::read(forum.join("run-options.json")).context(
+        "This forum has no resumable execution record; legacy/demo forums cannot be safely resumed",
+    )?;
+    let saved: SavedOptions = serde_json::from_slice(&bytes)?;
+    anyhow::ensure!(saved.version == 1, "Unsupported run-options version");
+    Ok(saved.options)
+}
+
+/// Save recovery settings before binding a dashboard or starting any models.
+pub fn initialize_options(forum: &Path, opts: &RunOptions) -> Result<()> {
+    if forum.join("run-options.json").exists() {
+        let saved = saved_options(forum)?;
+        anyhow::ensure!(
+            saved.classify == opts.classify && saved.score == opts.score,
+            "Model execution options differ from the saved run"
+        );
+    } else {
+        anyhow::ensure!(
+            substrate::current_round(forum) == 0,
+            "Existing rounds have no checkpoints; start a new forum instead of reusing unverified outputs"
+        );
+    }
+    checkpoint::write_durable(
+        &forum.join("run-options.json"),
+        &serde_json::to_vec_pretty(&SavedOptions {
+            version: 1,
+            options: opts.clone(),
+        })?,
+    )?;
+    Ok(())
+}
+
 /// Run a complete forum deliberation through the modified Delphi protocol.
 /// The configured maximum is a hard ceiling; disagreement never adds rounds.
 pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOptions) -> Result<()> {
     config::validate_for_run(forum_config)?;
+    anyhow::ensure!(
+        !opts.score || opts.classify,
+        "Metric scoring requires classifier metrics"
+    );
+    let _lock = checkpoint::ForumLock::acquire(forum_path)?;
+    initialize_options(forum_path, opts)?;
+    checkpoint::archive(&forum_path.join("final/report.html"))?;
     use crate::run_status::{self, Status};
+    if opts.emit_events {
+        events::finish_partial_line(forum_path)?;
+        checkpoint::archive(&forum_path.join("dashboard-state.json"))?;
+    }
     run_status::write(forum_path, Status::Running, None)?;
     let result = run_forum_inner(forum_config, forum_path, opts).and_then(|rounds_used| {
         run_status::write(forum_path, Status::Completed, None)?;
@@ -110,9 +164,20 @@ fn run_forum_inner(
         eprintln!("\n=== Round {} ({}) ===", round_num, stage);
 
         // Generate and write prompt
-        let prompt = generate_prompt(forum_config, round_num, &stage, &prior_rounds)?;
         let round_dir = substrate::create_round_dir(forum_path, round_num)?;
-        substrate::write_atomic(&round_dir.join("prompt.md"), &prompt)?;
+        let prompt = checkpoint::text(
+            &round_dir.join("prompt.md"),
+            json!([
+                forum_config.forum.topic,
+                forum_config.forum.context,
+                forum_config.participants.names,
+                round_num,
+                stage,
+                prior_rounds
+            ]),
+            true,
+            || generate_prompt(forum_config, round_num, &stage, &prior_rounds),
+        )?;
         eprintln!("  Wrote round-{}/prompt.md", round_num);
         if opts.emit_events {
             events::emit(
@@ -145,16 +210,31 @@ fn run_forum_inner(
         // Generate synthesis
         eprintln!("  Generating synthesis...");
         let prior_synth = prior_rounds.last().and_then(|r| r.synthesis.as_deref());
-        let synth = synthesis::generate_synthesis(
-            &forum_config.synthesis,
-            &forum_config.forum.topic,
-            round_num,
-            &stage,
-            &responses,
-            prior_synth,
-            review_mode,
+        let synth = checkpoint::text(
+            &round_dir.join("synthesis.md"),
+            json!([
+                forum_config.synthesis,
+                config::resolve_model(&forum_config.synthesis.model),
+                forum_config.forum.topic,
+                round_num,
+                stage,
+                responses,
+                prior_synth,
+                review_mode
+            ]),
+            true,
+            || {
+                synthesis::generate_synthesis(
+                    &forum_config.synthesis,
+                    &forum_config.forum.topic,
+                    round_num,
+                    &stage,
+                    &responses,
+                    prior_synth,
+                    review_mode,
+                )
+            },
         )?;
-        substrate::write_atomic(&round_dir.join("synthesis.md"), &synth)?;
         if opts.emit_events {
             events::emit(
                 forum_path,
@@ -166,12 +246,23 @@ fn run_forum_inner(
 
         // Generate claims
         eprintln!("  Generating claims...");
-        let claims = synthesis::generate_claims(
-            &forum_config.synthesis,
-            &forum_config.forum.topic,
-            &responses,
+        let claims = checkpoint::text(
+            &round_dir.join("claims.toml"),
+            json!([
+                forum_config.synthesis,
+                config::resolve_model(&forum_config.synthesis.model),
+                forum_config.forum.topic,
+                responses
+            ]),
+            true,
+            || {
+                synthesis::generate_claims(
+                    &forum_config.synthesis,
+                    &forum_config.forum.topic,
+                    &responses,
+                )
+            },
         )?;
-        substrate::write_atomic_toml(&round_dir.join("claims.toml"), &claims)?;
 
         let round_data = RoundData {
             number: round_num,
@@ -215,7 +306,16 @@ fn run_forum_inner(
         // Score per-participant alignment for position shift tracking (every round)
         if let Some(ref synth) = prior_rounds.last().and_then(|r| r.synthesis.clone()) {
             eprintln!("  Scoring alignment...");
-            match convergence::evaluate_alignment(&forum_config.convergence, synth, &responses) {
+            match checkpoint::json(
+                &round_dir.join("alignment.json"),
+                json!([
+                    forum_config.convergence,
+                    config::resolve_model(&forum_config.convergence.judge_model),
+                    synth,
+                    responses
+                ]),
+                || convergence::evaluate_alignment(&forum_config.convergence, synth, &responses),
+            ) {
                 Ok(alignment) => {
                     let alignment_toml: String = alignment
                         .iter()
@@ -226,21 +326,20 @@ fn run_forum_inner(
                         format!("[alignment]\nround = {}\n{}\n", round_num, alignment_toml);
                     substrate::write_atomic_toml(&round_dir.join("alignment.toml"), &content)?;
                 }
-                Err(error) => eprintln!(
-                    "  Warning: {error:#}; alignment scores will be unavailable for this round."
-                ),
+                Err(error) => {
+                    checkpoint::archive(&round_dir.join("alignment.toml"))?;
+                    checkpoint::archive(&round_dir.join("alignment.json"))?;
+                    eprintln!(
+                        "  Warning: {error:#}; alignment scores will be unavailable for this round."
+                    );
+                }
             }
         }
 
         // Convergence check (only after min_rounds)
         if round_num >= forum_config.convergence.min_rounds {
             eprintln!("  Evaluating convergence...");
-            let result = convergence::evaluate(
-                &forum_config.convergence,
-                &forum_config.forum.topic,
-                &responses,
-                forum_config.convergence.threshold,
-            )?;
+            let result = checkpointed_convergence(forum_config, &round_dir, &responses)?;
 
             if opts.emit_events {
                 events::emit(
@@ -281,11 +380,10 @@ fn run_forum_inner(
                 .last()
                 .map(|r| r.responses.clone())
                 .unwrap_or_default();
-            let result = convergence::evaluate(
-                &forum_config.convergence,
-                &forum_config.forum.topic,
+            let result = checkpointed_convergence(
+                forum_config,
+                &substrate::round_dir(forum_path, prior_rounds.len() as u32),
                 &last_responses,
-                forum_config.convergence.threshold,
             )?;
             if opts.emit_events {
                 events::emit(
@@ -313,6 +411,25 @@ fn run_forum_inner(
         eprintln!("  {}", warning);
     }
 
+    // Hide superseded rounds from current readers, retaining them for inspection.
+    for entry in std::fs::read_dir(forum_path)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some(number) = name
+            .strip_prefix("round-")
+            .and_then(|value| value.parse::<usize>().ok())
+            && number > prior_rounds.len()
+            && entry.file_type()?.is_dir()
+        {
+            let archive = forum_path.join(".checkpoints/obsolete");
+            std::fs::create_dir_all(&archive)?;
+            std::fs::rename(
+                entry.path(),
+                archive.join(format!("{}-{name}", uuid::Uuid::new_v4())),
+            )?;
+        }
+    }
+
     write_final_output(
         forum_config,
         forum_path,
@@ -322,6 +439,30 @@ fn run_forum_inner(
     )?;
 
     Ok(prior_rounds.len())
+}
+
+fn checkpointed_convergence(
+    config: &ForumConfig,
+    dir: &Path,
+    responses: &HashMap<String, String>,
+) -> Result<ConvergenceResult> {
+    checkpoint::json(
+        &dir.join("convergence.json"),
+        json!([
+            config.convergence,
+            config::resolve_model(&config.convergence.judge_model),
+            config.forum.topic,
+            responses
+        ]),
+        || {
+            convergence::evaluate(
+                &config.convergence,
+                &config.forum.topic,
+                responses,
+                config.convergence.threshold,
+            )
+        },
+    )
 }
 
 fn invoke_participants(
@@ -345,7 +486,18 @@ fn invoke_participants(
              your own prior responses and cross-examination assignment, regardless \
              of your model or CLI name. Speak only for `{name}`.\n\n{prompt}",
         );
-        substrate::write_atomic(&prompts_dir.join(format!("{}.md", name)), &personalized)?;
+        let personalized = checkpoint::text(
+            &prompts_dir.join(format!("{}.md", name)),
+            json!([name, prompt]),
+            true,
+            || Ok(personalized),
+        )?;
+        if config.participants.configs[name].participant_type == "manual" {
+            checkpoint::prepare_manual(
+                &round_dir.join(format!("{}.md", name)),
+                &json!(["manual", personalized]),
+            )?;
+        }
         participant_prompts.insert(name.clone(), personalized);
     }
 
@@ -398,15 +550,26 @@ fn invoke_participants(
             let timeout = participant_timeout;
 
             std::thread::spawn(move || {
-                let result = substrate::invoke_command(&cmd_template, &prompt, timeout).and_then(
-                    |response| {
-                        substrate::write_atomic(
-                            &round_dir.join(format!("{}.md", name)),
-                            &response,
-                        )?;
+                let result = checkpoint::text(
+                    &round_dir.join(format!("{}.md", name)),
+                    json!([cmd_template, prompt]),
+                    true,
+                    || {
+                        let response = substrate::invoke_command(&cmd_template, &prompt, timeout)?;
+                        anyhow::ensure!(
+                            !response.trim().is_empty(),
+                            "Participant returned an empty response"
+                        );
                         Ok(response)
                     },
                 );
+                let result = result.and_then(|response| {
+                    anyhow::ensure!(
+                        !response.trim().is_empty(),
+                        "Saved participant response is empty"
+                    );
+                    Ok(response)
+                });
                 tx.send((name, result)).ok();
             });
         }
@@ -481,6 +644,15 @@ fn invoke_participants(
             &manual_participants,
             timeout,
             |name, response| {
+                anyhow::ensure!(
+                    !response.trim().is_empty(),
+                    "Manual response from {name} is empty"
+                );
+                checkpoint::observe_manual(
+                    &round_dir.join(format!("{}.md", name)),
+                    json!(["manual", participant_prompts[name]]),
+                    response,
+                )?;
                 emit_participant_response(config, forum_path, round, name, response, emit_events)
             },
         )?;
@@ -740,11 +912,24 @@ fn write_final_output(
         .map(|r| &r.responses)
         .cloned()
         .unwrap_or_default();
-    let dissent = synthesis::generate_dissent(
-        &config.synthesis,
-        &config.forum.topic,
-        &last_responses,
-        key_disagreements,
+    let dissent = checkpoint::text(
+        &final_dir.join("dissent-generated.md"),
+        json!([
+            config.synthesis,
+            config::resolve_model(&config.synthesis.model),
+            config.forum.topic,
+            last_responses,
+            key_disagreements
+        ]),
+        true,
+        || {
+            synthesis::generate_dissent(
+                &config.synthesis,
+                &config.forum.topic,
+                &last_responses,
+                key_disagreements,
+            )
+        },
     )?;
     let dissent = match hollow_warning {
         Some(warning) => format!("{}\n\n{}", warning, dissent),
@@ -855,24 +1040,48 @@ fn run_classifier(
     };
 
     eprintln!("  Running pre-round classifier (Fire Keeper)...");
-    let (file, outcome) = classifier::ensure_classifier(
-        forum_path,
-        &forum_config.forum.id,
-        &forum_config.forum.topic,
-        forum_config.forum.context.as_deref(),
-        &model,
-        invoke,
+    let path = classifier::metrics_path(forum_path);
+    checkpoint::text(
+        &path,
+        json!([
+            forum_config.forum.topic,
+            forum_config.forum.context,
+            model,
+            custom_command
+        ]),
+        true,
+        || {
+            checkpoint::archive(&path)?;
+            let (file, _) = classifier::ensure_classifier(
+                forum_path,
+                &forum_config.forum.id,
+                &forum_config.forum.topic,
+                forum_config.forum.context.as_deref(),
+                &model,
+                invoke,
+            )?;
+            Ok(serde_json::to_string_pretty(&file)?)
+        },
     )?;
-
-    let verb = match outcome {
-        classifier::ClassifierOutcome::Fresh => "picked",
-        classifier::ClassifierOutcome::Resumed => "reused",
-    };
-    eprintln!(
-        "  \u{2713} Classifier {} {} metrics (incl. dissent axis)",
-        verb,
-        file.metrics.len(),
+    let file = classifier::read_metrics(forum_path)?.context("Missing classifier artifact")?;
+    classifier::validate_metrics(&file.metrics)?;
+    anyhow::ensure!(
+        file.version == classifier::METRICS_VERSION,
+        "Unsupported metrics version"
     );
+    anyhow::ensure!(
+        file.forum_id == forum_config.forum.id,
+        "Metrics belong to a different forum"
+    );
+    if !events::log_contains(forum_path, EventType::ClassifierMetrics)? {
+        events::emit(
+            forum_path,
+            &forum_config.forum.id,
+            EventType::ClassifierMetrics,
+            json!({ "metrics": file.metrics }),
+        )?;
+    }
+
     Ok(file)
 }
 
@@ -901,23 +1110,43 @@ fn run_scoring(
     };
 
     eprintln!("  Scoring metrics for round {}...", round);
-    let (_, outcome) = metric_scoring::ensure_scores(
-        forum_path,
-        &forum_config.forum.id,
-        &forum_config.forum.topic,
-        round,
-        metrics_file,
-        responses,
-        synthesis_text,
-        &model,
-        invoke,
+    let path = metric_scoring::scores_path(forum_path, round);
+    let file: metric_scoring::MetricScoresFile = checkpoint::json(
+        &path,
+        json!([
+            forum_config.forum.topic,
+            round,
+            metrics_file.metrics,
+            responses,
+            synthesis_text,
+            model,
+            custom_command
+        ]),
+        || {
+            checkpoint::archive(&path)?;
+            let (file, _) = metric_scoring::ensure_scores(
+                forum_path,
+                &forum_config.forum.id,
+                &forum_config.forum.topic,
+                round,
+                metrics_file,
+                responses,
+                synthesis_text,
+                &model,
+                invoke,
+            )?;
+            Ok(file)
+        },
     )?;
+    if !events::log_contains_round(forum_path, EventType::MetricScores, round)? {
+        events::emit(
+            forum_path,
+            &forum_config.forum.id,
+            EventType::MetricScores,
+            json!({ "round": round, "scores": file.scores }),
+        )?;
+    }
 
-    let verb = match outcome {
-        metric_scoring::ScoringOutcome::Fresh => "scored",
-        metric_scoring::ScoringOutcome::Resumed => "reused",
-    };
-    eprintln!("  \u{2713} Metrics {} for round {}", verb, round);
     Ok(())
 }
 
@@ -937,6 +1166,121 @@ fn is_review_mode(config: &ForumConfig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resume_reuses_completed_calls_and_invalidates_edited_evidence() {
+        let dir = std::env::temp_dir().join(format!("ting-resume-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sample: serde_json::Value =
+            serde_json::from_str(include_str!("../examples/demo-forum.json")).unwrap();
+        std::fs::write(
+            dir.join("metrics-response.json"),
+            json!({"metrics": sample["metrics"]}).to_string(),
+        )
+        .unwrap();
+        let scores: Vec<_> = sample["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|metric| json!({"metric_id":metric["id"],"score":7}))
+            .collect();
+        std::fs::write(
+            dir.join("scores-response.json"),
+            json!({"scores":scores}).to_string(),
+        )
+        .unwrap();
+        let script = r#"#!/bin/sh
+root='TESTDIR'
+prompt=$(cat)
+if [ "$1" = participant ]; then op=participant
+else
+  case "$prompt" in
+    *"Extract the key claims"*) op=claims ;;
+    *"pre-round classification"*) op=classifier ;;
+    *"scoring a completed round"*) op=metrics ;;
+    *"Score each participant's alignment"*) op=alignment ;;
+    *"evaluating whether participants"*) op=convergence ;;
+    *"documenting unresolved disagreements"*) op=dissent ;;
+    *) op=synthesis ;;
+  esac
+fi
+printf '%s\n' "$op" >> "$root/calls"
+printf '%s' "$prompt" > "$root/last-$op"
+if [ "$op" = claims ] && [ ! -f "$root/allow-claims" ]; then exit 1; fi
+case "$op" in
+  classifier) cat "$root/metrics-response.json" ;;
+  metrics) cat "$root/scores-response.json" ;;
+  convergence) printf 'SCORE: 8\nSUMMARY: Enough agreement\nDISAGREEMENTS:\n- Minority objection remains\n' ;;
+  alignment) printf 'ALIGNMENT: alice=8 bob=7' ;;
+  *) printf 'Recorded %s output' "$op" ;;
+esac
+"#.replace("TESTDIR", &dir.to_string_lossy());
+        std::fs::write(dir.join("model.sh"), script).unwrap();
+        let command = format!("sh '{}'", dir.join("model.sh").display());
+        let mut cfg = make_test_config("Resume with preserved evidence");
+        cfg.forum.max_rounds = 1;
+        cfg.convergence.min_rounds = 1;
+        cfg.convergence.judge_command = Some(command.clone());
+        cfg.synthesis.command = Some(command.clone());
+        for pc in cfg.participants.configs.values_mut() {
+            pc.participant_type = "command".into();
+            pc.command = Some(format!("{command} participant"));
+        }
+        let opts = RunOptions {
+            classify: true,
+            score: true,
+            emit_events: true,
+        };
+        let count = |op: &str| {
+            std::fs::read_to_string(dir.join("calls"))
+                .unwrap()
+                .lines()
+                .filter(|line| *line == op)
+                .count()
+        };
+        assert!(run_forum(&cfg, &dir, &opts).is_err());
+        assert_eq!(count("participant"), 2);
+        assert_eq!(count("synthesis"), 1);
+        std::fs::write(dir.join("allow-claims"), "ready").unwrap();
+        run_forum(&cfg, &dir, &saved_options(&dir).unwrap()).unwrap();
+        assert_eq!(count("participant"), 2);
+        assert_eq!(count("synthesis"), 1);
+        assert_eq!(count("claims"), 2); // Only the failed operation retried.
+        let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
+        std::fs::remove_file(dir.join("round-1/synthesis.md")).unwrap();
+        run_forum(&cfg, &dir, &opts).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("calls")).unwrap(), calls);
+        assert!(dir.join("round-1/synthesis.md").exists());
+
+        let path = classifier::metrics_path(&dir);
+        let mut metrics: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        metrics["metrics"][1]["description"] = json!("Changed rubric description");
+        std::fs::write(path, metrics.to_string()).unwrap();
+        run_forum(&cfg, &dir, &opts).unwrap();
+        assert_eq!(count("classifier"), 1);
+        assert_eq!(count("metrics"), 2);
+        assert_eq!(count("synthesis"), 1);
+        assert!(
+            std::fs::read_to_string(dir.join("last-metrics"))
+                .unwrap()
+                .contains("Changed rubric description")
+        );
+
+        std::fs::write(dir.join("round-1/alice.md"), "Edited minority objection").unwrap();
+        run_forum(&cfg, &dir, &opts).unwrap();
+        assert_eq!(count("participant"), 2);
+        assert_eq!(count("synthesis"), 2);
+        assert_eq!(count("metrics"), 3);
+        assert_eq!(count("convergence"), 2);
+        assert!(
+            std::fs::read_to_string(dir.join("last-dissent"))
+                .unwrap()
+                .contains("Edited minority objection")
+        );
+        assert!(substrate::is_completed(&dir));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn round_budget_is_a_hard_ceiling_and_early_convergence_still_stops() {
@@ -976,6 +1320,44 @@ mod tests {
             assert!(
                 events::log_contains_round(&dir, EventType::Convergence, expected_rounds).unwrap()
             );
+            if budget == 2 && score == 4 {
+                config.forum.max_rounds = 3;
+                run_forum(
+                    &config,
+                    &dir,
+                    &RunOptions {
+                        emit_events: true,
+                        ..RunOptions::default()
+                    },
+                )
+                .unwrap();
+                assert_eq!(substrate::current_round(&dir), 3);
+                std::fs::write(dir.join("final/report.html"), "obsolete report").unwrap();
+                config.convergence.judge_command = Some(
+                    "printf 'SCORE: 8\nSUMMARY: Agreement\nALIGNMENT: alice=8 bob=8\n'".into(),
+                );
+                run_forum(
+                    &config,
+                    &dir,
+                    &RunOptions {
+                        emit_events: true,
+                        ..RunOptions::default()
+                    },
+                )
+                .unwrap();
+                assert_eq!(substrate::current_round(&dir), 2);
+                assert!(!dir.join("round-3").exists());
+                assert!(!dir.join("final/report.html").exists());
+                assert!(
+                    std::fs::read_dir(dir.join(".checkpoints/obsolete"))
+                        .unwrap()
+                        .any(|entry| entry
+                            .unwrap()
+                            .file_name()
+                            .to_string_lossy()
+                            .ends_with("round-3"))
+                );
+            }
             std::fs::remove_dir_all(dir).unwrap();
         }
     }

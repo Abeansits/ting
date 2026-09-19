@@ -123,8 +123,12 @@ async fn serve_events(
             }
         };
 
+        // A new attempt can be preparing its first event while the log still
+        // ends with the previous attempt's terminal event.
+        let preparing_attempt = backlog.last().is_some_and(|event| matches!(event.event_type, EventType::ForumComplete | EventType::ForumFailed))
+            && crate::run_status::read(&forum_dir).ok().flatten().is_some_and(|record| record.status == crate::run_status::Status::Running);
         let mut completed = false;
-        for ev in backlog {
+        for ev in backlog.into_iter().filter(|_| !preparing_attempt) {
             if matches!(ev.event_type, EventType::ForumComplete | EventType::ForumFailed) {
                 completed = true;
             }
@@ -205,6 +209,12 @@ fn read_full_log(forum_dir: &Path) -> Result<Vec<DashboardEvent>> {
             Ok(ev) => events.push(ev),
             Err(e) => warn_malformed(&path, Some(line_no + 1), &e),
         }
+    }
+    if let Some(start) = events
+        .iter()
+        .rposition(|event| event.event_type == EventType::ForumStarted)
+    {
+        events.drain(..start);
     }
     Ok(events)
 }
@@ -514,6 +524,30 @@ mod tests {
             body.contains("\"completed\"") && body.contains("es.close()"),
             "JS must close SSE when init snapshot reports completed state",
         );
+    }
+
+    #[tokio::test]
+    async fn sse_replays_latest_attempt_after_an_old_failure() {
+        let dir = tmp_dir("resumed-stream");
+        for (seq, kind) in [
+            (1, EventType::ForumStarted),
+            (2, EventType::ForumFailed),
+            (3, EventType::ForumStarted),
+            (4, EventType::ForumComplete),
+        ] {
+            append_event(&dir, &make_event(seq, kind)).unwrap();
+        }
+        let response = router(dir)
+            .oneshot(Request::get("/api/events").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = tokio::time::timeout(Duration::from_secs(2), body_bytes(response))
+            .await
+            .unwrap();
+        let body = String::from_utf8(body).unwrap();
+        assert!(!body.contains("forum_failed"));
+        assert!(body.contains("\"seq\":3"));
+        assert!(body.contains("\"seq\":4"));
     }
 
     #[tokio::test]

@@ -24,7 +24,7 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 ### 0.5 · Public welcome
 
 - [x] License and complete package metadata (OSS-01; MIT selected by the maintainer).
-- [x] Working installation instructions and downloadable preview binaries (OSS-02; [v0.5.0-rc.1](https://github.com/Abeansits/ting/releases/tag/v0.5.0-rc.1)).
+- [x] Working installation instructions and downloadable preview binaries (OSS-02; [v0.5.0-rc.2](https://github.com/Abeansits/ting/releases/tag/v0.5.0-rc.2)).
 - [x] No-account `ting demo` with a representative sample forum (OSS-03; [#22](https://github.com/Abeansits/ting/pull/22)).
 - [x] Concise README, visuals, and generated illustrative output example (OSS-04; [#27](https://github.com/Abeansits/ting/pull/27)).
 - [x] Contributor guide, templates, and starter issues (OSS-05; #21, #23, #24).
@@ -38,12 +38,14 @@ Binary packaging is verified on four native targets in [#28](https://github.com/
 MIT licensing is recorded. The public `v0.5.0-rc.1` prerelease includes all four
 platform archives and checksums. Archive provenance matches tagged commit
 `211a8d303f934dd6292104d6bf6b87e2882f6029`; full live-model regression remains pending.
+RC2 adds report metadata escaping; all eight RC2 assets were verified against
+tagged commit `609b20874674733a94cdcc25500f1986593243f7` and published as a prerelease.
 
 ### 0.6 · Recovery and control
 
-- [ ] Add `ting resume` with checkpoints for completed operations.
-- [ ] Persist execution options needed for reproducible recovery.
-- [ ] Prevent stale scores from being reused after responses or rubrics change.
+- [x] Add `ting resume` with checkpoints for completed operations (implemented, pending PR merge).
+- [x] Persist execution options needed for reproducible recovery (implemented, pending PR merge).
+- [x] Prevent stale scores from being reused after responses or rubrics change (implemented, pending PR merge).
 - [ ] Add cancellation and distinct stop reasons: converged, stalled, budget exhausted, failed, interrupted.
 - [x] Enforce hard round limits and accurate configuration semantics (FIX-09; #29 and #30).
 - [ ] Display actual discussion content and configured thresholds in the dashboard (OSS-08).

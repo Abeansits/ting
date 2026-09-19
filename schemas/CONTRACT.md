@@ -16,8 +16,8 @@ contradicts the code, fix the code.
 ## Writer guarantees (Rust protocol)
 
 **Event log (`dashboard-events.jsonl`):**
-- Exactly one process writes. Multi-writer would need a lock file; that is
-  out of scope for v0.4.
+- Exactly one protocol runner writes. Checkpoint-era runners hold an exclusive
+  operating-system lock in `.runner.lock`; consumers remain read-only.
 - Each event is one JSON object followed by `\n`. The writer uses `O_APPEND`
   and calls `sync_data()` after the line. Readers may observe a partial trailing
   record and must wait for its newline: Rust's [`write_all`](https://doc.rust-lang.org/std/io/trait.Write.html#method.write_all)
@@ -39,6 +39,15 @@ contradicts the code, fix the code.
   Consumers that replay must pick up at `latest_seq + 1` in the event log.
 
 ## Reader guarantees (axum, Go TUI, or any future consumer)
+
+**Resumed attempts:**
+- Each attempt begins with a new `forum_started`, retaining monotonically
+  increasing sequence numbers and the previous event history.
+- Reducers clear previous rounds, metrics, and convergence at that boundary.
+- Browser replay starts at the latest `forum_started`, so an old terminal event
+  cannot close the stream before the resumed attempt is shown.
+- A torn trailing line is newline-delimited before a new attempt is appended;
+  readers skip malformed fragments as usual. Stale snapshots are archived.
 
 **Event log tailing:**
 - Process lines in file order. Trailing data that does not end in `\n` is an

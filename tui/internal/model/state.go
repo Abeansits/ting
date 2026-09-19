@@ -79,9 +79,10 @@ func (s *State) Apply(e Event) error {
 		s.Topic = p.Topic
 		s.Participants = p.Participants
 		s.MaxRounds = p.MaxRounds
-		if s.Status == StatusPending {
-			s.Status = StatusInProgress
-		}
+		s.Status = StatusInProgress
+		s.Rounds = []RoundSummary{}
+		s.ClassifierMetrics = nil
+		s.ConvergenceScore = nil
 	case EventTypeRoundStarted:
 		var p struct {
 			Round uint32 `json:"round"`

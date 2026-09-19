@@ -87,6 +87,16 @@ empty responses are not submitted. Named manual participants use `name:manual`.
 
 ## Inspect and export
 
+On current `main` after RC2, interrupted checkpointed forums can be resumed:
+
+```sh
+ting resume <forum-id>
+ting resume <forum-id> --dashboard --no-open
+```
+
+See [recovery semantics and limits](RECOVERY.md). Legacy/demo forums without
+execution records remain inspectable but are not automatically resumed.
+
 ```sh
 ting list
 ting status <forum-id>
