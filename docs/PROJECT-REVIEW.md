@@ -118,8 +118,10 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### FIX-10 · P2 · Make reports portable
 
-- [ ] Bundle required rendering assets or render HTML during export so reports work offline.
-- [ ] Replace the old `Abeansits/agora` footer link.
+- [x] Bundle required rendering assets or render HTML during export so reports work offline.
+- [x] Replace the old `Abeansits/agora` footer link.
+
+**Implementation:** forum and evaluation exports embed pinned Marked/DOMPurify builds and upstream notices. A content-security policy blocks automatic network resources; model Markdown images/media/styles are removed. Vendor archives are integrity-checked and file hashes recorded. Chrome smoke checks confirm rendered Markdown and dissent without external script tags.
 
 **Evidence:** `src/report.rs` loads Markdown rendering and sanitization libraries from a CDN despite the README's self-contained report claim.
 

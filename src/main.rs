@@ -9,6 +9,7 @@ mod events;
 mod metric_scoring;
 mod protocol;
 mod report;
+mod report_assets;
 mod run_status;
 mod server;
 mod substrate;

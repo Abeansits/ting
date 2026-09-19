@@ -549,6 +549,7 @@ pub fn generate_eval_html(eval_dir: &Path) -> Result<String> {
 <html lang="en">
 <head>
 <meta charset="utf-8">
+{security_policy}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ting Eval — {topic}</title>
 <style>
@@ -643,17 +644,12 @@ footer {{ margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--borde
 </footer>
 
 </div>
-<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-<script>
-document.querySelectorAll('.md-render').forEach(el => {{
-  const src = el.querySelector('.md-src');
-  if (src) {{ el.innerHTML = DOMPurify.sanitize(marked.parse(src.value)); }}
-}});
-</script>
+{report_scripts}
 </body>
 </html>"##,
         topic = esc(&topic),
+        report_scripts = crate::report_assets::scripts(),
+        security_policy = crate::report_assets::SECURITY_POLICY,
         baseline_name = esc(&baseline_name),
         judge = esc(&judge),
         eval_id = esc(&eval_id),

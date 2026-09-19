@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Export forum and evaluation reports with embedded renderer/sanitizer assets and
+  upstream notices. No CDN is required. Reports block automatic network resources
+  and omit images/media from model Markdown. Correct the report's repository link.
 - Truncate topic and preset-command list cells at Unicode character boundaries,
   preventing panics on emoji and non-Latin text.
 - Reject duplicate participant names before a run starts, including evaluation
