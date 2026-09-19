@@ -46,6 +46,10 @@ publish a report, which includes participant responses and potentially attached
 context. Review the report before publishing it. Don't commit private session
 directories or raw credentials to this repository.
 
+Exported HTML embeds its renderer and sanitizer, so it works without CDN access.
+The report blocks automatic network resources and omits images/media from model
+Markdown. Links remain clickable; following one is an explicit browser action.
+
 ## What adds model calls
 
 Participants are called once per round. Each round also generates a synthesis

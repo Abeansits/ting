@@ -29,8 +29,8 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 - [ ] Concise README, visuals, and real output examples (OSS-04).
 - [x] Contributor guide, templates, and starter issues (OSS-05; #21, #23, #24).
 - [x] Formatting, linting, toolchain, and platform checks (OSS-06; [#21](https://github.com/Abeansits/ting/pull/21)).
-- [x] Execution/cost documentation and `ting doctor` (OSS-07; implemented, pending PR merge).
-- [ ] Offline-capable HTML reports (FIX-10).
+- [x] Execution/cost documentation and `ting doctor` (OSS-07; [#25](https://github.com/Abeansits/ting/pull/25)).
+- [x] Offline-capable HTML reports (FIX-10; implemented, pending PR merge).
 
 **Release gate:** a newcomer can explore Ting without credentials and diagnose setup before a paid run.
 
