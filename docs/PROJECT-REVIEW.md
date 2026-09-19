@@ -147,6 +147,8 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 **Release evidence:** native packaging for Linux x86-64/ARM64 and macOS Intel/Apple Silicon passed extraction, demo, export, checksum, and provenance checks. The tagged workflow `35431782382` built the published `v0.5.0-rc.1` prerelease from `211a8d303f934dd6292104d6bf6b87e2882f6029`. All four archives and four sidecars were downloaded and verified against the tag, including embedded MIT licensing and binary hashes; the tagged Apple Silicon binary also ran locally. Public anonymous download was verified. The full live-model regression is still deferred.
 
+The follow-up `v0.5.0-rc.2` prerelease adds metadata escaping. Workflow `35433316086` and all eight downloaded assets were verified against `609b20874674733a94cdcc25500f1986593243f7` before publication.
+
 **Evidence:** `cargo build --release` in the current quick start does not put `ting` on `PATH`; v0.4.1 has no attached binaries.
 
 **Done when:** a newcomer can follow the documented installation on a clean supported system.

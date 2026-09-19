@@ -92,6 +92,27 @@ pub fn event_log_path(forum_dir: &Path) -> PathBuf {
     forum_dir.join(EVENT_LOG_FILENAME)
 }
 
+/// Delimit a torn final record before appending a new attempt. Readers will skip
+/// malformed fragments, and an existing tailer's partial buffer can recover.
+pub fn finish_partial_line(forum_dir: &Path) -> Result<()> {
+    use std::io::{Read, Seek, SeekFrom};
+    let path = event_log_path(forum_dir);
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut file = OpenOptions::new().read(true).append(true).open(path)?;
+    if file.metadata()?.len() > 0 {
+        file.seek(SeekFrom::End(-1))?;
+        let mut last = [0];
+        file.read_exact(&mut last)?;
+        if last[0] != b'\n' {
+            file.write_all(b"\n")?;
+            file.sync_data()?;
+        }
+    }
+    Ok(())
+}
+
 /// Assign the next `seq`, wrap as a `DashboardEvent`, and append to the log.
 pub fn emit(forum_dir: &Path, forum_id: &str, event_type: EventType, payload: Value) -> Result<()> {
     let seq = next_seq(forum_dir)?;
@@ -152,18 +173,20 @@ where
     let file = File::open(&path)
         .with_context(|| format!("Failed to open event log: {}", path.display()))?;
     let reader = BufReader::new(file);
+    let mut found = false;
     for line in reader.lines() {
         let line = line.with_context(|| format!("Failed to read event log: {}", path.display()))?;
         if line.trim().is_empty() {
             continue;
         }
-        if let Ok(evt) = serde_json::from_str::<DashboardEvent>(&line)
-            && predicate(&evt)
-        {
-            return Ok(true);
+        if let Ok(evt) = serde_json::from_str::<DashboardEvent>(&line) {
+            if evt.event_type == EventType::ForumStarted {
+                found = false;
+            }
+            found |= predicate(&evt);
         }
     }
-    Ok(false)
+    Ok(found)
 }
 
 /// Return the next sequence number to assign: `max(seq) + 1`, or `1` if the log
@@ -206,12 +229,41 @@ pub fn next_seq(forum_dir: &Path) -> Result<u64> {
         }
     }
 
-    Ok(max_seq + 1)
+    max_seq.checked_add(1).context("Event sequence exhausted")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_attempt_replays_its_own_markers_after_a_torn_line() {
+        let dir = tmp_dir("attempt-boundary");
+        emit(
+            &dir,
+            "test",
+            EventType::ClassifierMetrics,
+            serde_json::json!({"metrics":[]}),
+        )
+        .unwrap();
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(event_log_path(&dir))
+            .unwrap();
+        file.write_all(b"{partial").unwrap();
+        finish_partial_line(&dir).unwrap();
+        emit(
+            &dir,
+            "test",
+            EventType::ForumStarted,
+            serde_json::json!({"topic":"new","participants":["a"],"max_rounds":1}),
+        )
+        .unwrap();
+        assert!(!log_contains(&dir, EventType::ClassifierMetrics).unwrap());
+        assert!(log_contains(&dir, EventType::ForumStarted).unwrap());
+        assert_eq!(next_seq(&dir).unwrap(), 3);
+        fs::remove_dir_all(dir).unwrap();
+    }
     use chrono::Utc;
     use serde_json::json;
     use std::fs;

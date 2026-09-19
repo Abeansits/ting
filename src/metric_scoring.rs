@@ -241,6 +241,7 @@ pub enum ScoringOutcome {
 
 /// Score one round's metrics, writing the result to disk and emitting the
 /// matching event. Closure is injected so tests can stub the LLM.
+/// The protocol checkpoint boundary handles input freshness before this helper.
 #[allow(clippy::too_many_arguments)]
 pub fn ensure_scores<F>(
     forum_dir: &Path,

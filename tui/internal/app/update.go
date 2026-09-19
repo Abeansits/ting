@@ -51,6 +51,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case tailerEventMsg:
+		if msg.Event.Type == model.EventTypeForumStarted && msg.Event.Seq > m.state.LatestSeq {
+			m.focusedRound = 0
+		}
 		if err := m.state.Apply(msg.Event); err != nil {
 			m.tailErr = err
 		}

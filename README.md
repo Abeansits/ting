@@ -83,6 +83,7 @@ response. Agreement among models is not proof that their recommendation is right
 
 - [CLI, presets, human participation, and evaluation](docs/CLI.md)
 - [Architecture and session files](docs/ARCHITECTURE.md)
+- [Resuming forums in 0.6 development builds](docs/RECOVERY.md)
 - [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md) · [Good first issues](https://github.com/Abeansits/ting/labels/good%20first%20issue)
 - [Support](SUPPORT.md) · [Security reporting](SECURITY.md)

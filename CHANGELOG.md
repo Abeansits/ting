@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ting resume` with durable operation checkpoints, recorded execution options,
+  input/output fingerprints, and a single-runner lock. Completed calls are reused;
+  missing outputs are restored and changed evidence invalidates dependent work.
+- Resumed-attempt event replay and archival of obsolete rounds/reports. Legacy
+  sessions without execution records remain readable but cannot be safely resumed.
+
 ## [0.5.0-rc.2] - 2026-09-19
 
 Follow-up preview containing export metadata escaping. Full live-model regression

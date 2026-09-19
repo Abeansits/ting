@@ -26,6 +26,8 @@ directory and review the configured command before using an unfamiliar preset.
 Prompts are delivered through stdin or a temporary prompt file, according to the
 command template. The temporary file is removed when the invocation finishes.
 Session files remain on disk until you remove them.
+Recovery checkpoints and archived artifacts also contain forum content; handle
+them with the same care as the original prompts and responses.
 
 ## What leaves your machine
 

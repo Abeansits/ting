@@ -147,7 +147,7 @@ fn default_max_prior_context() -> u32 {
     4000
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Stage {
     Proposal,
     CrossExam,
@@ -164,7 +164,7 @@ impl std::fmt::Display for Stage {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConvergenceResult {
     Converged {
         score: f32,
@@ -185,7 +185,7 @@ impl ConvergenceResult {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct RoundData {
     pub number: u32,

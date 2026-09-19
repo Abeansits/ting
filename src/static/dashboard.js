@@ -93,6 +93,10 @@
     const p = ev.payload || {};
     switch (ev.type) {
       case "forum_started":
+        state.rounds.clear();
+        state.metrics = [];
+        state.convergenceHistory = [];
+        state.selectedRound = null;
         state.topic = p.topic || state.topic;
         state.participants = p.participants || state.participants;
         state.maxRounds = p.max_rounds || state.maxRounds;

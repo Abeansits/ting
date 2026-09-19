@@ -1,3 +1,4 @@
+mod checkpoint;
 mod classifier;
 mod config;
 mod convergence;
@@ -31,6 +32,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Resume a checkpointed forum, reusing only results whose inputs still match
+    Resume {
+        forum_id: String,
+        /// Also serve the dashboard while resuming (does not change saved scoring options)
+        #[arg(long)]
+        dashboard: bool,
+        #[arg(long, default_value_t = 3420)]
+        port: u16,
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Check installed prerequisites without running models or contacting providers
     Doctor {
         /// Also check these participant presets (repeat for multiple participants)
@@ -234,6 +246,22 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Resume {
+            forum_id,
+            dashboard,
+            port,
+            no_open,
+        } => {
+            let path = substrate::forum_dir(&forum_id);
+            let config = config::load(&path.join("meta.toml"))?;
+            let mut options = protocol::saved_options(&path)?;
+            if dashboard {
+                options.emit_events = true;
+                run_with_dashboard(config, path, options, port, no_open)
+            } else {
+                protocol::run_forum(&config, &path, &options)
+            }
+        }
         Commands::Doctor { participant, json } => {
             let report = doctor::inspect(&participant)?;
             if json {
@@ -465,6 +493,7 @@ fn cmd_new(
         emit_events: dashboard,
     };
 
+    protocol::initialize_options(&forum_path, &run_opts)?;
     if dashboard {
         run_with_dashboard(forum_config, forum_path, run_opts, port, no_open)
     } else {

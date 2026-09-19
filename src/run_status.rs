@@ -72,10 +72,14 @@ pub fn read(forum: &Path) -> Result<Option<RunStatus>> {
     #[cfg(unix)]
     if record.status == Status::Running {
         // Reject invalid PIDs before kill(0), which also accepts process groups.
-        let alive = record.pid > 0 && record.pid <= i32::MAX as u32 && {
+        let pid_alive = record.pid > 0 && record.pid <= i32::MAX as u32 && {
             let result = unsafe { libc::kill(record.pid as i32, 0) };
             result == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
         };
+        let alive = crate::checkpoint::runner_is_active(forum)
+            .ok()
+            .flatten()
+            .unwrap_or(pid_alive);
         if !alive {
             record.status = Status::Interrupted;
             record.error = Some("The runner exited before recording a final outcome.".into());
@@ -117,6 +121,20 @@ mod tests {
             .unwrap();
             assert_eq!(read(&dir).unwrap().unwrap().status, Status::Interrupted);
         }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn checkpoint_runner_status_uses_the_lock_not_a_reused_pid() {
+        let dir = std::env::temp_dir().join(format!("ting-status-lock-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("run-options.json"), "{}").unwrap();
+        let lock = crate::checkpoint::ForumLock::acquire(&dir).unwrap();
+        write(&dir, Status::Running, None).unwrap();
+        assert_eq!(read(&dir).unwrap().unwrap().status, Status::Running);
+        drop(lock);
+        assert_eq!(read(&dir).unwrap().unwrap().status, Status::Interrupted);
         fs::remove_dir_all(dir).unwrap();
     }
 }
