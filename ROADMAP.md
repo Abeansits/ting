@@ -34,6 +34,9 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 
 **Release gate:** a newcomer can explore Ting without credentials and diagnose setup before a paid run.
 
+Binary packaging is verified on four native targets in [#28](https://github.com/Abeansits/ting/pull/28).
+The license decision and actual public release remain open; no version tag has been created.
+
 ### 0.6 · Recovery and control
 
 - [ ] Add `ting resume` with checkpoints for completed operations.

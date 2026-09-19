@@ -64,5 +64,6 @@ transport itself makes no model calls.
 Convergence and alignment failures retry once. More participants, larger prompts,
 additional rounds, and retries can all increase usage. Pricing and allowances
 come from your provider accounts; Ting currently does not promise a dollar-cost
-estimate. The current protocol may add one extra round after severe disagreement;
-strict round ceilings are tracked in the recovery/control milestone.
+estimate. `--max-rounds` is a hard ceiling on iterations: severe disagreement does
+not add extra rounds. The final summary distinguishes convergence from an exhausted
+round budget.

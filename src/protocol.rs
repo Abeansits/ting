@@ -23,8 +23,7 @@ pub struct RunOptions {
 }
 
 /// Run a complete forum deliberation through the modified Delphi protocol.
-/// Supports auto-extend: if convergence score < 5 at max_rounds, runs one extra round
-/// to avoid premature termination while capping sycophancy from over-deliberation.
+/// The configured maximum is a hard ceiling; disagreement never adds rounds.
 pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOptions) -> Result<()> {
     config::validate(forum_config)?;
     use crate::run_status::{self, Status};
@@ -99,17 +98,9 @@ fn run_forum_inner(
     } else {
         None
     };
-    let mut effective_max = forum_config.forum.max_rounds;
-    let mut auto_extended = false;
     let mut last_convergence: Option<ConvergenceResult> = None;
 
-    let mut round_num = 0u32;
-    loop {
-        round_num += 1;
-        if round_num > effective_max {
-            break;
-        }
-
+    for round_num in 1..=forum_config.forum.max_rounds {
         let stage = match round_num {
             1 => Stage::Proposal,
             2 => Stage::CrossExam,
@@ -275,16 +266,6 @@ fn run_forum_inner(
                         eprintln!("    - {}", d);
                     }
 
-                    // Auto-extend: if at max_rounds with very low score, add one more round
-                    if round_num == effective_max && *score < 5.0 && !auto_extended {
-                        effective_max += 1;
-                        auto_extended = true;
-                        eprintln!(
-                            "  Auto-extending: score {:.1} < 5.0, adding round {}",
-                            score, effective_max
-                        );
-                    }
-
                     last_convergence = Some(result);
                 }
             }
@@ -300,18 +281,30 @@ fn run_forum_inner(
                 .last()
                 .map(|r| r.responses.clone())
                 .unwrap_or_default();
-            convergence::evaluate(
+            let result = convergence::evaluate(
                 &forum_config.convergence,
                 &forum_config.forum.topic,
                 &last_responses,
                 forum_config.convergence.threshold,
-            )?
+            )?;
+            if opts.emit_events {
+                events::emit(
+                    forum_path,
+                    &forum_config.forum.id,
+                    EventType::Convergence,
+                    json!({ "round": prior_rounds.len(), "score": result.score() }),
+                )?;
+            }
+            result
         }
     };
 
     match &final_result {
         ConvergenceResult::Converged { .. } => {}
-        _ => eprintln!("\n=== Max rounds ({}) reached ===", effective_max),
+        _ => eprintln!(
+            "\n=== Max rounds ({}) reached ===",
+            forum_config.forum.max_rounds
+        ),
     }
 
     // Hollow consensus detection: check if claims contradict the convergence score
@@ -764,13 +757,20 @@ fn write_final_output(
         ConvergenceResult::Converged { score, .. } => ("converged", *score),
         ConvergenceResult::Divergent { score, .. } => ("divergent", *score),
     };
+    let stop_reason = if status == "converged" {
+        "converged"
+    } else {
+        "budget_exhausted"
+    };
     let meta_summary = format!(
         "[summary]\n\
          status = \"{}\"\n\
+         stop_reason = \"{}\"\n\
          final_score = {:.1}\n\
          total_rounds = {}\n\
          participants = {}\n",
         status,
+        stop_reason,
         score,
         rounds.len(),
         rounds.last().map_or(0, |r| r.responses.len()),
@@ -937,6 +937,48 @@ fn is_review_mode(config: &ForumConfig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn round_budget_is_a_hard_ceiling_and_early_convergence_still_stops() {
+        for (budget, score, expected_rounds, reason) in [
+            (2, 4, 2, "budget_exhausted"),
+            (5, 8, 2, "converged"),
+            (1, 8, 1, "converged"),
+        ] {
+            let dir = std::env::temp_dir().join(format!("ting-budget-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut config = make_test_config("Budget test");
+            config.forum.max_rounds = budget;
+            config.convergence.judge_command = Some(format!(
+                "printf 'SCORE: {score}\nSUMMARY: Sample\nALIGNMENT: alice=8 bob=8\n'"
+            ));
+            config.synthesis.command = Some("printf 'Sample synthesis'".into());
+            for participant in config.participants.configs.values_mut() {
+                participant.participant_type = "command".into();
+                participant.command = Some("printf 'Sample response'".into());
+            }
+            run_forum(
+                &config,
+                &dir,
+                &RunOptions {
+                    emit_events: true,
+                    ..RunOptions::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(substrate::current_round(&dir), expected_rounds);
+            assert!(!dir.join(format!("round-{}", expected_rounds + 1)).exists());
+            let summary: toml::Value = std::fs::read_to_string(dir.join("final/meta-summary.toml"))
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert_eq!(summary["summary"]["stop_reason"].as_str(), Some(reason));
+            assert!(
+                events::log_contains_round(&dir, EventType::Convergence, expected_rounds).unwrap()
+            );
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
 
     #[test]
     fn response_write_failure_aborts_without_a_response_event() {

@@ -66,7 +66,7 @@ enum Commands {
         #[arg(short, long, default_value = "5m")]
         timeout: String,
 
-        /// Maximum number of rounds (default 2; auto-extends if score < 5)
+        /// Hard maximum number of rounds (default 2; no automatic extension)
         #[arg(long, default_value_t = 2)]
         max_rounds: u32,
 
