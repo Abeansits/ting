@@ -84,3 +84,8 @@ response. Agreement among models is not proof that their recommendation is right
 
 Small fixes, examples, and thoughtful critiques are welcome. The automated tests
 use fake model commands, so you can contribute without paid model accounts.
+
+## License
+
+Ting is [MIT licensed](LICENSE). Bundled report libraries retain their
+[upstream licenses and notices](vendor/report/README.md).

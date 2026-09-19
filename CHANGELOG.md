@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- MIT license and matching package metadata, with upstream report-library notices retained.
 - `ting doctor` checks live-run prerequisites without executing presets or
   contacting providers, with optional participant checks and JSON output.
 - Execution/privacy/cost documentation and scoped contributor starter issues.

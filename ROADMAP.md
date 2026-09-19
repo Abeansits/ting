@@ -23,7 +23,7 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 
 ### 0.5 · Public welcome
 
-- [ ] License and complete package metadata (OSS-01).
+- [x] License and complete package metadata (OSS-01; MIT selected by the maintainer).
 - [ ] Working installation instructions and downloadable binaries (OSS-02).
 - [x] No-account `ting demo` with a representative sample forum (OSS-03; [#22](https://github.com/Abeansits/ting/pull/22)).
 - [x] Concise README, visuals, and generated illustrative output example (OSS-04; [#27](https://github.com/Abeansits/ting/pull/27)).
@@ -35,7 +35,7 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 **Release gate:** a newcomer can explore Ting without credentials and diagnose setup before a paid run.
 
 Binary packaging is verified on four native targets in [#28](https://github.com/Abeansits/ting/pull/28).
-The license decision and actual public release remain open; no version tag has been created.
+MIT licensing is recorded. The actual public release remains open; no version tag has been created.
 
 ### 0.6 · Recovery and control
 
