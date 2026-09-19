@@ -29,9 +29,11 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### FIX-02 · P1 · Enforce internal model timeouts
 
-- [ ] Route default Claude calls through a bounded process runner.
-- [ ] Support cancellation and cleanup of descendant processes.
-- [ ] Return actionable errors identifying the failed operation.
+- [x] Route default Claude calls through a bounded process runner.
+- [x] Cancel timed-out invocations and clean up their process groups.
+- [x] Identify the failed model/command in errors.
+
+**Implementation:** default Claude and custom commands share the deadline runner. Tests cover a stalled process, descendant cleanup, zero deadlines, literal arguments, and error details. User-initiated whole-forum cancellation remains part of milestone 0.6.
 
 **Evidence:** `src/substrate.rs::invoke_fire_keeper_model` accepts a timeout, but its `invoke_claude` fallback uses an unbounded `.output()` call.
 

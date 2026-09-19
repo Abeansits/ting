@@ -270,10 +270,6 @@ pub fn invoke_command(
     prompt: &str,
     timeout: Duration,
 ) -> Result<String> {
-    use std::io::{self, Write};
-    use std::process::Stdio;
-    use std::sync::{Arc, Mutex};
-
     let tmp_file = std::env::temp_dir().join(format!("ting-{}.md", uuid::Uuid::new_v4()));
     fs::write(&tmp_file, prompt)
         .with_context(|| "Failed to write prompt temp file")?;
@@ -292,97 +288,88 @@ pub fn invoke_command(
     } else {
         Some(prompt.to_string())
     };
-    let tmp_display = tmp_file.display().to_string();
-    let cmd_for_thread = command.clone();
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg("-c")
+        .arg(command)
+        .env("TING_PROMPT_FILE", &tmp_file);
+    invoke_process(cmd, prompt_for_stdin, timeout, command_template)
+}
 
-    // Share the child PID so we can kill the process group on timeout
-    let child_pid: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(None));
-    let child_pid_for_thread = child_pid.clone();
+/// Execute either a shell preset or a direct model command with the same
+/// deadline and process-group cleanup. Spawn before starting the waiter so
+/// even a zero timeout cannot race with publication of the child PID.
+fn invoke_process(
+    mut cmd: std::process::Command,
+    prompt_for_stdin: Option<String>,
+    timeout: Duration,
+    description: &str,
+) -> Result<String> {
+    use std::io::{self, Write};
+    use std::process::Stdio;
 
-    // Run in a thread so we can enforce a timeout
+    let started = Instant::now();
+    cmd.stdin(if prompt_for_stdin.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Each invocation owns its process group, including ordinary children.
+        cmd.process_group(0);
+    }
+
+    let mut child = cmd.spawn()
+        .with_context(|| format!("Failed to execute: {}", description))?;
+    let pid = child.id();
+    let stdin = child.stdin.take();
     let (tx, rx) = mpsc::channel();
     let worker = std::thread::spawn(move || {
-        let result = (|| -> io::Result<std::process::Output> {
-            let mut cmd = std::process::Command::new("sh");
-            cmd.arg("-c")
-                .arg(&cmd_for_thread)
-                .stdin(if prompt_for_stdin.is_some() {
-                    Stdio::piped()
-                } else {
-                    Stdio::null()
-                })
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .env("TING_PROMPT_FILE", &tmp_display);
-
-            // Make child a process group leader so kill(-pgid) reaps all descendants
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::CommandExt;
-                unsafe {
-                    cmd.pre_exec(|| {
-                        libc::setpgid(0, 0);
-                        Ok(())
-                    });
-                }
-            }
-
-            let mut child = cmd.spawn()?;
-
-            // Store PID (= PGID since we called setpgid) for timeout kill
-            *child_pid_for_thread.lock().unwrap() = Some(child.id());
-
-            // Write stdin in a separate thread to avoid deadlock:
-            // if the child fills stdout/stderr before reading all stdin,
-            // write_all blocks while wait_with_output isn't draining yet.
-            let stdin_handle = if let Some(prompt_data) = prompt_for_stdin {
-                let stdin = child.stdin.take();
-                Some(std::thread::spawn(move || {
-                    if let Some(mut stdin) = stdin {
-                        match stdin.write_all(prompt_data.as_bytes()) {
-                            Ok(()) => {}
-                            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {}
-                            Err(e) => eprintln!("  Warning: stdin write error: {}", e),
-                        }
+        // Drain stdout/stderr concurrently with stdin to avoid pipe deadlocks.
+        let stdin_handle = prompt_for_stdin.map(|prompt_data| {
+            std::thread::spawn(move || {
+                if let Some(mut stdin) = stdin {
+                    match stdin.write_all(prompt_data.as_bytes()) {
+                        Ok(()) => {}
+                        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {}
+                        Err(e) => eprintln!("  Warning: stdin write error: {}", e),
                     }
-                }))
-            } else {
-                None
-            };
-
-            let output = child.wait_with_output()?;
-            if let Some(h) = stdin_handle {
-                let _ = h.join();
-            }
-            Ok(output)
-        })();
-        tx.send(result).ok();
+                }
+            })
+        });
+        let output = child.wait_with_output();
+        if let Some(handle) = stdin_handle {
+            let _ = handle.join();
+        }
+        tx.send(output).ok();
     });
 
-    let output = match rx.recv_timeout(timeout) {
-        Ok(result) => result.with_context(|| format!("Failed to execute: {}", command_template))?,
-        Err(_) => {
-            // Timeout: kill the process group
-            if let Some(pid) = *child_pid.lock().unwrap() {
-                #[cfg(unix)]
-                unsafe {
-                    libc::kill(-(pid as i32), libc::SIGKILL);
-                }
-                #[cfg(windows)]
-                {
-                    // Best-effort kill on Windows
-                    let _ = std::process::Command::new("taskkill")
-                        .args(&["/F", "/T", "/PID", &pid.to_string()])
-                        .output();
-                }
-            }
-            // Join the worker thread to prevent leak
-            let _ = worker.join();
-            anyhow::bail!(
-                "Command timed out after {:?}: {}",
-                timeout,
-                command_template
-            );
+    let result = rx.recv_timeout(timeout.saturating_sub(started.elapsed()));
+    if matches!(result, Err(mpsc::RecvTimeoutError::Timeout)) {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &pid.to_string()])
+                .output();
+        }
+    }
+    // Reap the child and join pipe writers before returning or deleting input.
+    let _ = worker.join();
+    let output = match result {
+        Ok(output) => output.with_context(|| format!("Failed to execute: {}", description))?,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            anyhow::bail!("Command timed out after {:?}: {}", timeout, description);
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            anyhow::bail!("Command worker stopped unexpectedly: {}", description);
         }
     };
 
@@ -390,7 +377,7 @@ pub fn invoke_command(
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let detail = if stderr.is_empty() { &stdout } else { &stderr };
-        anyhow::bail!("Command failed ({}): {}", command_template, detail);
+        anyhow::bail!("Command failed ({}): {}", description, detail);
     }
 
     String::from_utf8(output.stdout)
@@ -422,37 +409,73 @@ pub fn invoke_fire_keeper_model(
     if let Some(cmd) = custom_command {
         invoke_command(cmd, prompt, timeout)
     } else {
-        invoke_claude(model, prompt)
+        invoke_claude(model, prompt, timeout)
     }
 }
 
-/// Invoke the claude CLI directly (no shell, safe from metacharacters)
-fn invoke_claude(model: &str, prompt: &str) -> Result<String> {
-    let output = std::process::Command::new("claude")
-        .arg("--model")
+/// Invoke Claude directly with literal arguments and the Fire Keeper deadline.
+/// On timeout the shared runner terminates its process group and reaps the child.
+fn invoke_claude(model: &str, prompt: &str, timeout: Duration) -> Result<String> {
+    let mut cmd = std::process::Command::new("claude");
+    cmd.arg("--model")
         .arg(model)
         .arg("-p")
         .arg(prompt)
         .arg("--output-format")
-        .arg("text")
-        .output()
-        .with_context(|| {
-            "Failed to invoke 'claude' CLI. Ensure Claude Code is installed and in PATH."
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Claude CLI failed: {}", stderr);
-    }
-
-    String::from_utf8(output.stdout)
-        .with_context(|| "Invalid UTF-8 in model output")
-        .map(|s| s.trim().to_string())
+        .arg("text");
+    invoke_process(cmd, None, timeout, "claude (Fire Keeper)")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_process_enforces_deadline_and_kills_descendants() {
+        let dir = std::env::temp_dir().join(format!("ting-test-deadline-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("survived");
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args([
+            "-c",
+            "sh -c 'sleep 1; printf survived > \"$1\"' sh \"$1\" & wait",
+            "sh",
+        ]).arg(&marker);
+
+        let started = Instant::now();
+        let error = invoke_process(cmd, None, Duration::from_millis(100), "fake model")
+            .unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert!(error.to_string().contains("fake model"));
+        assert!(started.elapsed() < Duration::from_secs(3));
+        std::thread::sleep(Duration::from_millis(1200));
+        assert!(!marker.exists(), "descendant survived the deadline");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn zero_deadline_does_not_wait_for_child_completion() {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "sleep 30"]);
+        let started = Instant::now();
+        let error = invoke_process(cmd, None, Duration::ZERO, "fake model").unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn direct_process_preserves_arguments_and_failure_details() {
+        let mut cmd = std::process::Command::new("printf");
+        cmd.arg("%s").arg("literal $(echo unsafe) `text` $HOME");
+        let output = invoke_process(cmd, None, Duration::from_secs(5), "fake model").unwrap();
+        assert_eq!(output, "literal $(echo unsafe) `text` $HOME");
+
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "printf 'model unavailable' >&2; exit 1"]);
+        let error = invoke_process(cmd, None, Duration::from_secs(5), "fake model").unwrap_err();
+        assert!(error.to_string().contains("model unavailable"));
+        assert!(error.to_string().contains("fake model"));
+    }
 
     #[test]
     fn test_write_atomic() {

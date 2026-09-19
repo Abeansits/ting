@@ -10,8 +10,8 @@ The [project review and fix backlog](docs/PROJECT-REVIEW.md) contains evidence, 
 
 ### 0.4.2 · Trustworthy runs
 
-- [x] Preserve dissent after convergence (FIX-01; implemented, pending PR merge).
-- [ ] Bound internal model calls and clean up processes (FIX-02).
+- [x] Preserve dissent after convergence (FIX-01; merged in [#13](https://github.com/Abeansits/ting/pull/13)).
+- [x] Bound internal model calls and clean up processes (FIX-02; implemented, pending PR merge).
 - [ ] Supply participant identities and critique targets (FIX-03).
 - [ ] Emit dashboard lifecycle events (FIX-04).
 - [ ] Validate judgments and represent unavailable evaluations honestly (FIX-05).
