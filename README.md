@@ -1,476 +1,86 @@
 # Ting
 
-A multi-agent deliberation tool where any LLM, CLI tool, or human can participate in structured, multi-turn discussions using the filesystem as a shared medium. Ting orchestrates a modified Delphi protocol — independent proposals, adversarial cross-examination, informed revision — then synthesizes agreement and preserves dissent as a first-class output.
+**Independent proposals. Cross-examination. A recommendation that keeps the dissent.**
 
-> **Why "Ting"?** From Old Swedish *ting* — an open-air assembly where free people gathered to settle disputes, make laws, and render judgments. The tradition dates back over a thousand years across Scandinavia. Fittingly, Ting named itself: three AI models deliberated on what this tool should be called, and *ting* is what they converged on.
+Ting runs structured discussions between AI models and humans. Each participant
+proposes a position, critiques another, and revises its thinking. You get a saved
+recommendation, the disagreements that remain, and a record of how the discussion
+changed.
 
-## Who This Is For
+![Ting's illustrative demo: two rounds, three participants, and per-round metrics](docs/images/demo-dashboard.png)
 
-**Ting is for you if:**
-- You use multiple AI models and want better decisions than any single model gives
-- You want structured disagreement, not just "ask Claude" — cross-examination surfaces blind spots
-- You make architecture, planning, or strategy decisions regularly and want to stress-test your thinking
-- You want a record of *why* a decision was made, including the dissenting views
+*An actual screenshot of `ting demo`. Its participants and scores are hand-written
+sample data, not live model evaluations.*
 
-**Ting is NOT for:**
-- Simple Q&A where one model is enough — Ting is overkill for "fix this bug"
-- Real-time chat — deliberation takes minutes, not seconds
-- People who want a framework or SDK — this is a standalone CLI tool
-- Consensus-seeking — Ting preserves dissent as a first-class output, not a failure mode
+## Try it
 
-## Prerequisites
+Build on **macOS or Linux** with [Rust 1.88+](https://rustup.rs/):
 
-- **Rust** (1.88+, edition 2024; needed only to build from source)
-- **Claude Code** (`claude` CLI) — required for synthesis generation and convergence evaluation (fire keeper internals). Also available as a participant preset, but not required as one
-- At least one participant CLI installed and authenticated: `codex`, `gemini`, `opencode`, or just use `human` for manual participation
-- Optional: `herenow` CLI for publishing HTML reports via `--publish`
-
-## Quick Start
-
-```bash
-# Install from source
+```sh
 git clone https://github.com/Abeansits/ting.git
 cd ting
 cargo install --path . --locked
-
-# Explore a hand-written sample — no accounts, API keys, or model calls
 ting demo
-
-# Run a 3-model deliberation with the live dashboard
-# (opens http://127.0.0.1:3420 in your browser)
-ting doctor --participant codex --participant gemini --participant claude
-ting new "Should we use Pipecat or Vapi for voice?" \
-  --participant codex \
-  --participant gemini \
-  --participant claude \
-  --dashboard
-
-# Or run without the dashboard
-ting new "Should we use Pipecat or Vapi for voice?" \
-  --participant codex --participant gemini --participant claude
-
-# Check progress
-ting status <forum-id>
-
-# View result
-ting result <forum-id>
-
-# Generate HTML report
-ting result --html <forum-id>
-
-# Publish report to the web
-ting result --html --publish <forum-id>
-
-# Re-open the dashboard against an existing forum (in-progress or done)
-ting serve <forum-id>
 ```
 
-### What You'll See
+The demo needs **no API keys, model CLIs, or paid calls**. It prints a sample
+recommendation and dissent, then opens the dashboard at `http://127.0.0.1:3420`.
+Press Ctrl+C to stop the server; the sample stays on disk for inspection.
 
-```
-  ████████╗██╗███╗   ██╗ ██████╗
-  ╚══██╔══╝██║████╗  ██║██╔════╝
-     ██║   ██║██╔██╗ ██║██║  ███╗
-     ██║   ██║██║╚██╗██║██║   ██║
-     ██║   ██║██║ ╚████║╚██████╔╝
-     ╚═╝   ╚═╝╚═╝  ╚═══╝ ╚═════╝
-  v0.4.1  Structured deliberation between AI models
+Prefer files only? Run `ting demo --output ./my-sample --no-serve`. Existing
+folders are never overwritten. Read the [sample output](examples/demo-output.md)
+or edit the [sample source](examples/demo-forum.json).
 
-  Forum  ting-2026-03-27-a1b2c3d4
-  Topic  Should we use Pipecat or Vapi for voice?
-  With   codex, gemini, claude
-  Rules  5 rounds, 5m timeout
+## Run your own discussion
 
-=== Round 1 (proposal) ===
-  Wrote round-1/prompt.md
-  Invoking participant: codex
-  Invoking participant: gemini
-  Invoking participant: claude
-  Collected 3/3 responses
-  Generating synthesis...
-  Generating claims...
-
-=== Round 2 (cross-examination) ===
-  Wrote round-2/prompt.md
-  Invoking participant: codex
-  Invoking participant: gemini
-  Invoking participant: claude
-  Collected 3/3 responses
-  Generating synthesis...
-  Generating claims...
-  Evaluating convergence...
-  CONVERGED (score: 8.0): Strong agreement on core architecture...
-
-=== Final output written to ~/.ting/sessions/ting-2026-03-27-a1b2c3d4/final/ ===
-```
-
-## Protocol
-
-```
- Round 1: PROPOSAL (blind)
- Each participant independently proposes their position.
-         |
-         v
- Round 2: CROSS-EXAMINATION (adversarial)
- Each participant critiques an assigned other's position,
- then defends or revises their own.
-         |
-         v
- Round 3+: REVISION (informed)
- Participants revise their positions given all prior context.
-         |
-         v
- CONVERGENCE CHECK (LLM judge, score 1-10)
-   >= threshold --> final/synthesis.md + final/claims.toml
-   < threshold  --> another round (up to max_rounds)
-                    final/dissent.md preserves disagreements
-```
-
-Dissent is not failure — it's the most valuable output when models genuinely disagree.
-
-## CLI Reference
-
-### `ting doctor`
-
-Checks installed binaries without running model commands or contacting providers.
-Add `--participant` for each preset you plan to use, or `--json` for machine-readable
-output. Authentication and custom shell commands require your own inspection.
-See [execution, privacy, and cost](docs/EXECUTION.md) before a live run.
-
-### `ting demo`
-
-Creates a two-round illustrative forum, prints its recommendation and dissent,
-then opens the dashboard. The participants and scores are clearly labeled sample
-data, not live model evaluations. The sample stays in your sessions directory so
-you can inspect it with `ting status`, `ting result`, or the TUI.
+For a live run, install and authenticate **Claude Code** for synthesis and judging,
+plus whichever participant CLIs you want to use. Built-in presets include
+`claude`, `codex`, `gemini`, `opencode`, `ollama`, and `human`.
 
 ```sh
-ting demo
-ting demo --no-open --port 4000
-ting demo --output ./my-sample --no-serve
+ting doctor --participant codex --participant gemini
+
+ting new "Should our small team add a message queue?" \
+  --participant codex --participant gemini --dashboard
 ```
 
-An existing output directory is never overwritten. See the editable
-[sample source](examples/demo-forum.json).
+`doctor` checks executables; authentication and custom commands still need your
+inspection. Live runs use your provider accounts and can take several minutes.
+Review the [execution, privacy, and cost guide](docs/EXECUTION.md) first: participant
+commands inherit your environment and permissions.
 
-### `ting new`
+After the run, use the forum ID printed by Ting:
 
-```bash
-ting new "Your question or topic" \
-  --participant codex \
-  --participant gemini \
-  --participant human \
-  --timeout 5m \
-  --max-rounds 5 \
-  --context notes.md    # attach supplementary material
-```
-
-Creates a forum and runs the full deliberation (blocking). The `--context` flag accepts a file path or inline text that gets included in every round's prompt. Context is snapshotted at creation time (not re-read each round) for reproducibility.
-
-### `ting status <forum-id>`
-
-Shows round-by-round progress with who has/hasn't responded:
-
-```bash
+```sh
+ting list
 ting status <forum-id>
-
-# View a specific round's full responses
-ting status <forum-id> --round 2
-```
-
-### `ting list`
-
-Lists all forums with status and topic.
-
-### `ting result <forum-id>`
-
-Prints the final synthesis and dissent to terminal. Add `--html` to generate a self-contained HTML report. Add `--publish` to push it to the web via here.now.
-
-### `ting serve <forum-id>`
-
-Serves the dashboard against an existing forum directory — in-progress or
-completed — without running a new round.
-
-```bash
-ting serve <forum-id>              # default port 3420, auto-opens browser
-ting serve <forum-id> --port 4000 --no-open
-```
-
-Ctrl+C triggers a graceful shutdown; a second Ctrl+C (or a 5s stall from a
-long-lived SSE client) forces exit so the process never hangs.
-
-### `ting respond <forum-id>`
-
-For human participants — submit a response from another terminal while the forum is running.
-Round, participant name, and input method are all auto-detected:
-
-```bash
-# Simplest: auto-detects round + participant, opens $EDITOR
-ting respond <forum-id>
-
-# Explicit: specify round, name, and file
-ting respond <forum-id> -r 2 -n human -f my-response.md
-```
-
-## Participant Types
-
-### Presets (built-in)
-
-| Preset     | Command                                  | Input Method |
-|------------|------------------------------------------|--------------|
-| `codex`    | `codex exec --full-auto --skip-git-repo-check -` | stdin    |
-| `gemini`   | `cat {prompt_file} \| gemini -p ' '`     | file pipe    |
-| `claude`   | `cat {prompt_file} \| claude -p -`       | file pipe    |
-| `opencode` | `opencode run`                           | stdin        |
-| `ollama`   | `cat {prompt_file} \| ollama run llama3` | file pipe    |
-| `human`    | (manual — writes files directly)         | filesystem   |
-
-```bash
-ting new "topic" --participant codex --participant gemini
-```
-
-### Custom Presets
-
-Save reusable presets with `ting preset`:
-
-```bash
-# Add a custom preset
-ting preset add mistral "cat {prompt_file} | ollama run mistral"
-
-# List all presets (built-in + custom)
-ting preset list
-
-# Use it
-ting new "topic" --participant mistral --participant codex
-
-# Remove it
-ting preset remove mistral
-```
-
-Custom presets are stored in `~/.ting/config.toml` and override built-ins of the same name.
-
-### Custom Commands (inline)
-
-```bash
-ting new "topic" \
-  --participant "llama:command:cat {prompt_file} | ollama run llama3" \
-  --participant "gpt:command:cat {prompt_file} | openai-cli chat"
-```
-
-The prompt is delivered to commands via:
-1. **stdin** — piped directly (safest)
-2. **`{prompt_file}`** — replaced with a temp file path in the command
-3. **`$TING_PROMPT_FILE`** — env var pointing to the same temp file
-
-### Human / Manual
-
-```bash
-ting new "topic" --participant human --participant codex
-```
-
-When the fire keeper needs a human response, it prints instructions:
-```
-  ✓ claude responded (1,203 words)
-  ✓ codex responded (987 words)
-
-  ⏳ Waiting for YOU (human)
-
-    Read others' responses:  ting status <id> --round 1
-    Write your response:     ting respond <id>
-    Or edit directly:        ~/.ting/sessions/<id>/round-1/human.md
-
-  Watching for your file... (timeout in 4m30s)
-```
-
-### Other Models
-
-Any CLI that reads from stdin or a file can participate. Examples:
-
-```bash
-# Cursor (editor, no CLI agent mode — use via custom command if they add one)
-# Pi (no public CLI — use via API wrapper)
-
-# Any ollama model
-ting preset add deepseek "cat {prompt_file} | ollama run deepseek-r1"
-```
-
-## Configuration
-
-Forums are configured via `meta.toml`, generated automatically by `ting new`:
-
-```toml
-[forum]
-id = "ting-2026-03-27-001"
-topic = "Should we use Pipecat or Vapi?"
-created = "2026-03-27T00:30:00Z"
-max_rounds = 5
-protocol = "delphi-crossexam"
-context = "Optional supplementary material..."
-
-[participants]
-names = ["codex", "gemini"]
-
-[participants.codex]
-type = "command"
-command = "codex exec --full-auto --skip-git-repo-check -"
-
-[participants.gemini]
-type = "command"
-command = "gemini -p \" \""
-
-[timing]
-round_timeout = "5m"
-participant_timeout = "2m"
-
-[convergence]
-policy = "llm-judge"
-judge_model = "claude-opus"
-threshold = 7
-min_rounds = 2
-
-[synthesis]
-model = "claude-opus"
-```
-
-## Dashboard
-
-Ting v0.4 ships a live dashboard so you can watch a deliberation unfold —
-per-round syntheses arriving, per-metric scores updating each round, and
-convergence climbing toward threshold — instead of tailing log files.
-
-### What runs where
-
-Turning on `--dashboard` activates four cooperating pieces:
-
-1. **JSONL event log.** The Fire Keeper emits an append-only event stream
-   to `~/.ting/sessions/<forum-id>/dashboard-events.jsonl` with a
-   versioned envelope (`seq`, `forum_id`, `timestamp`, `type`, `payload`).
-   Monotonic `seq` is the authoritative ordering key. The runtime
-   emits `forum_started`, `round_started`, `participant_response`,
-   `classifier_metrics`, `metric_scores`, `synthesis`, `convergence`,
-   `forum_complete`, and `forum_failed`. `claims` and `alignment` remain reserved.
-   JSON Schemas, a companion `dashboard-state.json` snapshot format,
-   and reader/writer guarantees live in [`schemas/`](./schemas).
-
-2. **Pre-round classifier.** Before round 1, the Fire Keeper generates
-   5–10 question-specific metrics plus a mandatory Dissent Axis, written
-   to `round-0/metrics.json`. These are the axes the dashboard animates
-   across rounds. Opt out with `--no-classifier`.
-
-3. **Per-round metric scoring.** After each round's responses and
-   synthesis land, the Fire Keeper scores every classifier metric in a
-   single batched pass and emits a `metric_scores` event. Scoring
-   failures warn-and-continue; they never abort the forum. Opt out with
-   `--no-metric-scoring`.
-
-4. **HTML dashboard (axum).** A small `axum` server binds to loopback
-   (default port `3420`), serves the dashboard shell at `GET /`, and an
-   SSE stream at `GET /api/events` that replays the log and then
-   forwards live events. A compacted snapshot is also available at
-   `GET /api/state` when a `dashboard-state.json` snapshot exists on
-   disk (404 otherwise; clients replay the event log when there is no
-   snapshot). The UI renders metric bars, a convergence gauge, and a
-   synthesis feed in pure CSS; no charting library. The Dissent Axis
-   is always pinned to the top of the metrics panel.
-
-### Running it
-
-```bash
-# Forum + dashboard, auto-opens the browser
-ting new "topic" --participant codex --participant gemini --dashboard
-
-# Non-default port, no browser auto-open
-ting new "topic" --participant codex --dashboard --port 4000 --no-open
-
-# Turn off the Fire Keeper axes (dashboard still works; metrics panel
-# stays empty since no classifier_metrics event is emitted)
-ting new "topic" --participant codex --dashboard --no-classifier
-
-# Re-open the dashboard against an existing forum (in-progress or done)
+ting result <forum-id>
+ting result <forum-id> --html
 ting serve <forum-id>
 ```
 
-The server binds to `127.0.0.1` only. There is no authentication and no
-remote exposure knob — if you want to share a run, use `ting result --html
---publish <forum-id>` for the post-hoc report.
+HTML reports are self-contained and work offline. Publishing is a separate,
+explicit `--publish` action; review private context before sharing.
 
-### Go TUI
+## What makes it useful
 
-A standalone terminal client lives under [`tui/`](./tui) for when a
-browser isn't convenient. It reads the same filesystem contract
-(`dashboard-state.json` + `dashboard-events.jsonl`) directly, with no
-HTTP dependency on the Rust server. Build and run:
+- **Structured disagreement:** proposals, assigned critiques, and informed revision.
+- **Dissent survives convergence:** enough agreement to stop does not mean unanimity.
+- **Bring your tools:** model CLIs, custom commands, local-model participants, or humans.
+- **Inspect the evidence:** prompts, responses, claims, and outcomes are ordinary files.
+- **Watch progress:** a browser dashboard and an optional Go TUI share the event log.
 
-```bash
-cd tui
-go build -o ting-tui .
-./ting-tui ~/.ting/sessions/<forum-id>
-```
+Ting is useful for architecture choices, planning, and decisions with real
+tradeoffs. It is a standalone CLI, and deliberation is slower than a single
+response. Agreement among models is not proof that their recommendation is right.
 
-Keys: `q` / Ctrl-C / Esc quit, `r` reload snapshot, `?` help,
-`↑`/`↓` or `j`/`k` focus rounds, `1`–`9` jump to a round, `0` clear.
+## Explore
 
-### Without `--dashboard`
+- [CLI, presets, human participation, and evaluation](docs/CLI.md)
+- [Architecture and session files](docs/ARCHITECTURE.md)
+- [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md) · [Good first issues](https://github.com/Abeansits/ting/labels/good%20first%20issue)
+- [Support](SUPPORT.md) · [Security reporting](SECURITY.md)
 
-No event log, classifier call, metric-scoring pass, or HTTP server is started.
-Participant prompts and run outcomes are still saved for inspection and reliable
-completion tracking.
-
-## Directory Structure
-
-```
-~/.ting/sessions/<forum-id>/
-  meta.toml
-  run-status.json            # running/completed/failed outcome; runner PID
-  dashboard-events.jsonl      # append-only event stream (with --dashboard)
-  round-0/
-    metrics.json              # classifier axes         (with --dashboard)
-  round-1/
-    prompt.md
-    prompts/
-      codex.md                # exact input with participant identity
-      gemini.md
-    codex.md
-    gemini.md
-    synthesis.md
-    claims.toml
-    metric-scores.json        # per-round scores        (with --dashboard)
-  round-2/
-    ...
-  final/
-    synthesis.md
-    claims.toml
-    dissent.md
-    meta-summary.toml
-    report.html               # with --html flag
-```
-
-## Architecture
-
-Completion is recorded only after synthesis, claims, dissent, and summary metadata
-are written. Failed runs keep their partial artifacts for inspection, but `ting
-result` does not present them as completed output. On Unix, a running record whose
-process has exited is shown as interrupted. Older sessions without a run-status
-record count as complete only when all four final artifacts exist.
-
-```
-Participants (any CLI, LLM, or human)
-        |  write responses
-        v
-   Filesystem Substrate
-   sessions/<id>/round-N/*.md
-        |  watch (notify)
-        v
-    Fire Keeper (this binary)
-    - Orchestrates rounds
-    - Generates synthesis (via claude CLI)
-    - Evaluates convergence (LLM judge)
-    - Writes final output
-```
-
----
-
-Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md),
-[the roadmap](ROADMAP.md), and [support](SUPPORT.md).
-
-<p align="center">Built on 🌍 with ❤️</p>
+Small fixes, examples, and thoughtful critiques are welcome. The automated tests
+use fake model commands, so you can contribute without paid model accounts.
