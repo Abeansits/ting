@@ -25,8 +25,10 @@ pub fn validate(config: &ForumConfig) -> Result<()> {
     if config.participants.names.is_empty() {
         anyhow::bail!("At least one participant required");
     }
+    let mut seen = std::collections::HashSet::new();
     for name in &config.participants.names {
         validate_id(name, "participant name")?;
+        anyhow::ensure!(seen.insert(name), "Duplicate participant name: {}. Use distinct aliases for multiple instances of one model.", name);
         if !config.participants.configs.contains_key(name) {
             anyhow::bail!("Missing config for participant: {}", name);
         }
@@ -528,6 +530,24 @@ type = "manual"
 "#;
         let config: ForumConfig = toml::from_str(toml_str).unwrap();
         assert!(validate(&config).is_err());
+    }
+
+    #[test]
+    fn duplicate_participants_are_rejected_before_they_share_a_file() {
+        let config: ForumConfig = toml::from_str(r#"
+[forum]
+id = "test-duplicates"
+topic = "Test"
+created = "2026-09-18T00:00:00Z"
+max_rounds = 1
+[participants]
+names = ["alice", "alice"]
+[participants.alice]
+type = "command"
+command = "cat"
+"#).unwrap();
+        let error = validate(&config).unwrap_err().to_string();
+        assert!(error.contains("Duplicate participant name: alice"));
     }
 
     #[test]
