@@ -2,6 +2,7 @@ mod classifier;
 mod config;
 mod convergence;
 mod dashboard_state;
+mod demo;
 mod eval;
 mod events;
 mod metric_scoring;
@@ -28,6 +29,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Explore an illustrative forum without model CLIs, accounts, or API calls
+    Demo {
+        /// Save the sample to this new directory instead of the sessions folder
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Create the sample and exit without starting the dashboard
+        #[arg(long)]
+        no_serve: bool,
+        #[arg(long, default_value_t = 3420)]
+        port: u16,
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Create and start a new deliberation forum
     New {
         /// The topic or question for deliberation
@@ -209,6 +223,27 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Demo {
+            output,
+            no_serve,
+            port,
+            no_open,
+        } => {
+            let id = format!("ting-demo-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+            let path = output.unwrap_or_else(|| substrate::forum_dir(&id));
+            demo::create(&path, &id)?;
+            let absolute = std::fs::canonicalize(&path)?;
+            let reference = absolute.to_str().context("Demo path is not UTF-8")?;
+            eprintln!(
+                "Illustrative demo — no model calls or API keys.\nSaved to {}",
+                absolute.display()
+            );
+            cmd_result(reference, false, false)?;
+            if !no_serve {
+                cmd_serve(reference, port, no_open)?;
+            }
+            Ok(())
+        }
         Commands::New {
             topic,
             participant,

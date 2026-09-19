@@ -33,6 +33,9 @@ git clone https://github.com/Abeansits/ting.git
 cd ting
 cargo install --path . --locked
 
+# Explore a hand-written sample — no accounts, API keys, or model calls
+ting demo
+
 # Run a 3-model deliberation with the live dashboard
 # (opens http://127.0.0.1:3420 in your browser)
 ting new "Should we use Pipecat or Vapi for voice?" \
@@ -125,6 +128,22 @@ ting serve <forum-id>
 Dissent is not failure — it's the most valuable output when models genuinely disagree.
 
 ## CLI Reference
+
+### `ting demo`
+
+Creates a two-round illustrative forum, prints its recommendation and dissent,
+then opens the dashboard. The participants and scores are clearly labeled sample
+data, not live model evaluations. The sample stays in your sessions directory so
+you can inspect it with `ting status`, `ting result`, or the TUI.
+
+```sh
+ting demo
+ting demo --no-open --port 4000
+ting demo --output ./my-sample --no-serve
+```
+
+An existing output directory is never overwritten. See the editable
+[sample source](examples/demo-forum.json).
 
 ### `ting new`
 
