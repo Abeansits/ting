@@ -2,6 +2,12 @@
 name = "ting"
 version = "0.4.1"
 edition = "2024"
+rust-version = "1.88"
+description = "Structured deliberation between AI models and humans, with dissent preserved"
+repository = "https://github.com/Abeansits/ting"
+readme = "README.md"
+keywords = ["cli", "llm", "deliberation", "agents"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

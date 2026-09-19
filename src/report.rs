@@ -52,11 +52,7 @@ pub fn generate_html_report(config: &ForumConfig, forum_path: &Path) -> Result<S
         // Read synthesis
         let synthesis = read_optional(&round_dir.join("synthesis.md"));
 
-        let prompt_summary = prompt
-            .lines()
-            .take(3)
-            .collect::<Vec<_>>()
-            .join("\n");
+        let prompt_summary = prompt.lines().take(3).collect::<Vec<_>>().join("\n");
 
         rounds_html.push_str(&format!(
             r#"<details class="round" {open}>
@@ -159,13 +155,8 @@ pub fn generate_html_report(config: &ForumConfig, forum_path: &Path) -> Result<S
             if line.trim().starts_with('[') {
                 in_models = false;
             }
-            if in_models {
-                if let Some((k, v)) = line.split_once('=') {
-                    map.insert(
-                        k.trim().to_string(),
-                        v.trim().trim_matches('"').to_string(),
-                    );
-                }
+            if in_models && let Some((k, v)) = line.split_once('=') {
+                map.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
             }
         }
         map
@@ -321,7 +312,9 @@ fn build_position_chart(forum_path: &Path, total_rounds: u32, participants: &[St
     let mut has_data = false;
 
     for r in 1..=total_rounds {
-        let alignment_path = forum_path.join(format!("round-{}", r)).join("alignment.toml");
+        let alignment_path = forum_path
+            .join(format!("round-{}", r))
+            .join("alignment.toml");
         let mut round_scores = std::collections::HashMap::new();
         if let Ok(content) = std::fs::read_to_string(&alignment_path) {
             for line in content.lines() {
@@ -329,11 +322,11 @@ fn build_position_chart(forum_path: &Path, total_rounds: u32, participants: &[St
                 if line.starts_with('[') || line.starts_with("round") {
                     continue;
                 }
-                if let Some((name, val)) = line.split_once('=') {
-                    if let Ok(score) = val.trim().parse::<f32>() {
-                        round_scores.insert(name.trim().to_string(), score);
-                        has_data = true;
-                    }
+                if let Some((name, val)) = line.split_once('=')
+                    && let Ok(score) = val.trim().parse::<f32>()
+                {
+                    round_scores.insert(name.trim().to_string(), score);
+                    has_data = true;
                 }
             }
         }
@@ -345,10 +338,7 @@ fn build_position_chart(forum_path: &Path, total_rounds: u32, participants: &[St
     }
 
     // Auto-scale Y axis from actual data with ~10% padding
-    let all_scores: Vec<f32> = data
-        .iter()
-        .flat_map(|r| r.values().copied())
-        .collect();
+    let all_scores: Vec<f32> = data.iter().flat_map(|r| r.values().copied()).collect();
     let data_min = all_scores.iter().cloned().fold(f32::MAX, f32::min);
     let data_max = all_scores.iter().cloned().fold(f32::MIN, f32::max);
     let range = (data_max - data_min).max(1.0);
@@ -367,16 +357,20 @@ fn build_position_chart(forum_path: &Path, total_rounds: u32, participants: &[St
     let chart_w = w - pad_l - pad_r;
     let chart_h = h - pad_t - pad_b;
 
-    let colors = ["#58a6ff", "#4ade80", "#facc15", "#f87171", "#c084fc", "#fb923c"];
+    let colors = [
+        "#58a6ff", "#4ade80", "#facc15", "#f87171", "#c084fc", "#fb923c",
+    ];
 
     let mut svg = format!(
         r#"<svg viewBox="0 0 {w} {h}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:{w}px">"#,
-        w = w, h = h,
+        w = w,
+        h = h,
     );
 
     // Background
     svg.push_str(&format!(
-        r##"<rect width="{}" height="{}" fill="#161b22" rx="12"/>"##, w, h
+        r##"<rect width="{}" height="{}" fill="#161b22" rx="12"/>"##,
+        w, h
     ));
 
     // Grid lines and Y labels (auto-scaled)
@@ -389,7 +383,11 @@ fn build_position_chart(forum_path: &Path, total_rounds: u32, participants: &[St
         let opacity = if is_major { "0.3" } else { "0.15" };
         svg.push_str(&format!(
             r##"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="#30363d" stroke-opacity="{}"/>"##,
-            pad_l, y, w - pad_r, y, opacity
+            pad_l,
+            y,
+            w - pad_r,
+            y,
+            opacity
         ));
         if is_major {
             svg.push_str(&format!(
@@ -438,7 +436,11 @@ fn build_position_chart(forum_path: &Path, total_rounds: u32, participants: &[St
                 .iter()
                 .enumerate()
                 .map(|(i, (x, y))| {
-                    if i == 0 { format!("M{},{}", x, y) } else { format!("L{},{}", x, y) }
+                    if i == 0 {
+                        format!("M{},{}", x, y)
+                    } else {
+                        format!("L{},{}", x, y)
+                    }
                 })
                 .collect();
             svg.push_str(&format!(

@@ -475,9 +475,14 @@ fn cmd_serve(forum_id: &str, port: u16, no_open: bool) -> Result<()> {
     }
 
     let record = run_status::read(&forum_path)?;
-    let status = record.as_ref().map(|record| record.status.as_str()).unwrap_or(
-        if substrate::is_completed(&forum_path) { "completed" } else { "unknown (legacy forum)" }
-    );
+    let status = record
+        .as_ref()
+        .map(|record| record.status.as_str())
+        .unwrap_or(if substrate::is_completed(&forum_path) {
+            "completed"
+        } else {
+            "unknown (legacy forum)"
+        });
     eprintln!();
     eprintln!("  Forum   {}", forum_id);
     eprintln!("  Status  {}", status);
@@ -700,13 +705,15 @@ fn cmd_list() -> Result<()> {
         return Ok(());
     }
 
-    println!("{:<32} {:<10} {}", "ID", "Status", "Topic");
+    println!("{:<32} {:<10} Topic", "ID", "Status");
     println!("{}", "-".repeat(72));
 
     for (id, path) in &forums {
         let completed = substrate::is_completed(path);
         let record = run_status::read(path)?;
-        let status = record.as_ref().map(|record| record.status.as_str())
+        let status = record
+            .as_ref()
+            .map(|record| record.status.as_str())
             .unwrap_or(if completed { "completed" } else { "unknown" });
 
         let topic = config::load(&path.join("meta.toml"))
@@ -941,7 +948,7 @@ fn print_banner() {
         ("", "", "")
     };
     eprint!("{}", accent);
-    eprintln!(r"");
+    eprintln!();
     eprintln!(r"  ████████╗██╗███╗   ██╗ ██████╗ ");
     eprintln!(r"  ╚══██╔══╝██║████╗  ██║██╔════╝ ");
     eprintln!(r"     ██║   ██║██╔██╗ ██║██║  ███╗");
@@ -1052,16 +1059,16 @@ fn cmd_preset_add(name: &str, command: &str) -> Result<()> {
 
 fn cmd_preset_list() -> Result<()> {
     let presets = config::list_all_presets();
-    println!("{:<14} {:<6} {}", "Name", "Type", "Command");
+    println!("{:<14} {:<6} Command", "Name", "Type");
     println!("{}", "-".repeat(70));
     for (name, cmd, is_custom) in &presets {
         let tag = if *is_custom { "custom" } else { "built-in" };
-        let cmd_display = abbreviate(&cmd, 45);
+        let cmd_display = abbreviate(cmd, 45);
         println!("{:<14} {:<9} {}", name, tag, cmd_display);
     }
     println!(
-        "{:<14} {:<9} {}",
-        "human", "built-in", "(manual — writes files directly)"
+        "{:<14} {:<9} (manual — writes files directly)",
+        "human", "built-in"
     );
     Ok(())
 }
@@ -1093,7 +1100,12 @@ fn abbreviate(text: &str, limit: usize) -> String {
     if text.chars().count() <= limit {
         text.to_string()
     } else {
-        format!("{}...", text.chars().take(limit.saturating_sub(3)).collect::<String>())
+        format!(
+            "{}...",
+            text.chars()
+                .take(limit.saturating_sub(3))
+                .collect::<String>()
+        )
     }
 }
 
@@ -1111,7 +1123,10 @@ mod cli_tests {
             }
             assert_eq!(abbreviate("A short topic 🦀", limit), "A short topic 🦀");
             assert_eq!(abbreviate(&"x".repeat(limit), limit), "x".repeat(limit));
-            assert_eq!(abbreviate(&"x".repeat(limit + 1), limit), format!("{}...", "x".repeat(limit - 3)));
+            assert_eq!(
+                abbreviate(&"x".repeat(limit + 1), limit),
+                format!("{}...", "x".repeat(limit - 3))
+            );
         }
     }
 }

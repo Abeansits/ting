@@ -13,8 +13,7 @@ pub fn load(path: &Path) -> Result<ForumConfig> {
 }
 
 pub fn save(config: &ForumConfig, path: &Path) -> Result<()> {
-    let content =
-        toml::to_string_pretty(config).with_context(|| "Failed to serialize config")?;
+    let content = toml::to_string_pretty(config).with_context(|| "Failed to serialize config")?;
     std::fs::write(path, content)
         .with_context(|| format!("Failed to write config: {}", path.display()))?;
     Ok(())
@@ -28,7 +27,11 @@ pub fn validate(config: &ForumConfig) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
     for name in &config.participants.names {
         validate_id(name, "participant name")?;
-        anyhow::ensure!(seen.insert(name), "Duplicate participant name: {}. Use distinct aliases for multiple instances of one model.", name);
+        anyhow::ensure!(
+            seen.insert(name),
+            "Duplicate participant name: {}. Use distinct aliases for multiple instances of one model.",
+            name
+        );
         if !config.participants.configs.contains_key(name) {
             anyhow::bail!("Missing config for participant: {}", name);
         }
@@ -79,13 +82,11 @@ fn validate_id(id: &str, label: &str) -> Result<()> {
     }
     // Participant names have stricter rules (used as filenames)
     if label == "participant name"
-        && !id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        && !id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
     {
-        anyhow::bail!(
-            "{} must be [a-z0-9_-] only: {}",
-            label,
-            id
-        );
+        anyhow::bail!("{} must be [a-z0-9_-] only: {}", label, id);
     }
     Ok(())
 }
@@ -118,9 +119,15 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
 /// Built-in presets for common model CLIs.
 fn builtin_preset(name: &str) -> Option<(&'static str, &'static str)> {
     match name {
-        "codex" => Some(("command", "codex exec --full-auto --skip-git-repo-check -c model_reasoning_effort=medium -")),
+        "codex" => Some((
+            "command",
+            "codex exec --full-auto --skip-git-repo-check -c model_reasoning_effort=medium -",
+        )),
         "gemini" => Some(("command", "cat {prompt_file} | gemini -p ' '")),
-        "claude" => Some(("command", "cat {prompt_file} | claude -p - --model claude-opus-4-6")),
+        "claude" => Some((
+            "command",
+            "cat {prompt_file} | claude -p - --model claude-opus-4-6",
+        )),
         "opencode" => Some(("command", "opencode run -m opencode-go/kimi-k2.5")),
         "ollama" => Some(("command", "cat {prompt_file} | ollama run llama3")),
         _ => None,
@@ -165,7 +172,9 @@ pub fn list_all_presets() -> Vec<(String, String, bool)> {
 
 fn ting_config_path() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(home).join(".ting").join("config.toml")
+    std::path::PathBuf::from(home)
+        .join(".ting")
+        .join("config.toml")
 }
 
 fn load_user_presets() -> std::collections::HashMap<String, String> {
@@ -220,12 +229,10 @@ pub fn save_user_preset(name: &str, command: &str) -> Result<()> {
         p.insert(name.to_string(), toml::Value::String(command.to_string()));
     }
 
-    let output = toml::to_string_pretty(&table)
-        .with_context(|| "Failed to serialize config")?;
+    let output = toml::to_string_pretty(&table).with_context(|| "Failed to serialize config")?;
     // Atomic write: write to tmp then rename
     let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, &output)
-        .with_context(|| format!("Failed to write {}", tmp.display()))?;
+    std::fs::write(&tmp, &output).with_context(|| format!("Failed to write {}", tmp.display()))?;
     std::fs::rename(&tmp, &path)
         .with_context(|| format!("Failed to rename {} -> {}", tmp.display(), path.display()))?;
     Ok(())
@@ -349,7 +356,9 @@ pub fn resolve_model_id(preset_name: &str) -> String {
 
 fn extract_flag_value(cmd: &str, flag: &str) -> Option<String> {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
-    parts.iter().position(|&p| p == flag)
+    parts
+        .iter()
+        .position(|&p| p == flag)
         .and_then(|i| parts.get(i + 1))
         .map(|v| v.to_string())
 }
@@ -406,8 +415,7 @@ mod tests {
 
     #[test]
     fn test_parse_participant_spec_command() {
-        let (name, config) =
-            parse_participant_spec("v0:command:claude -p '{prompt}'").unwrap();
+        let (name, config) = parse_participant_spec("v0:command:claude -p '{prompt}'").unwrap();
         assert_eq!(name, "v0");
         assert_eq!(config.participant_type, "command");
         assert_eq!(config.command.unwrap(), "claude -p '{prompt}'");
@@ -534,7 +542,8 @@ type = "manual"
 
     #[test]
     fn duplicate_participants_are_rejected_before_they_share_a_file() {
-        let config: ForumConfig = toml::from_str(r#"
+        let config: ForumConfig = toml::from_str(
+            r#"
 [forum]
 id = "test-duplicates"
 topic = "Test"
@@ -545,7 +554,9 @@ names = ["alice", "alice"]
 [participants.alice]
 type = "command"
 command = "cat"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let error = validate(&config).unwrap_err().to_string();
         assert!(error.contains("Duplicate participant name: alice"));
     }

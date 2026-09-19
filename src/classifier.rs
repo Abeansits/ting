@@ -17,7 +17,7 @@
 
 use crate::events::{self, DashboardEvent, EventType};
 use crate::substrate;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -408,9 +408,11 @@ mod tests {
     fn parse_well_formed_response() {
         let metrics = parse_classifier_response(&sample_llm_response()).unwrap();
         assert_eq!(metrics.len(), 6);
-        assert!(metrics
-            .iter()
-            .any(|m| m.id == "dissent_axis" && m.mandatory == Some(true)));
+        assert!(
+            metrics
+                .iter()
+                .any(|m| m.id == "dissent_axis" && m.mandatory == Some(true))
+        );
     }
 
     #[test]

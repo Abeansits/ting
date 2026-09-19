@@ -37,7 +37,12 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
         Ok(rounds_used) => {
             if opts.emit_events {
                 // Final artifacts and their durable outcome are already committed.
-                if let Err(error) = events::emit(forum_path, &forum_config.forum.id, EventType::ForumComplete, json!({ "rounds_used": rounds_used })) {
+                if let Err(error) = events::emit(
+                    forum_path,
+                    &forum_config.forum.id,
+                    EventType::ForumComplete,
+                    json!({ "rounds_used": rounds_used }),
+                ) {
                     eprintln!("  Warning: could not announce completed forum: {error:#}");
                 }
             }
@@ -45,20 +50,31 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
         }
         Err(error) => {
             let message = format!("{error:#}");
-            if let Err(status_error) = run_status::write(forum_path, Status::Failed, Some(message.clone())) {
+            if let Err(status_error) =
+                run_status::write(forum_path, Status::Failed, Some(message.clone()))
+            {
                 eprintln!("  Warning: could not record failed forum: {status_error:#}");
             }
-            if opts.emit_events {
-                if let Err(event_error) = events::emit(forum_path, &forum_config.forum.id, EventType::ForumFailed, json!({ "error": message })) {
-                    eprintln!("  Warning: could not announce failed forum: {event_error:#}");
-                }
+            if opts.emit_events
+                && let Err(event_error) = events::emit(
+                    forum_path,
+                    &forum_config.forum.id,
+                    EventType::ForumFailed,
+                    json!({ "error": message }),
+                )
+            {
+                eprintln!("  Warning: could not announce failed forum: {event_error:#}");
             }
             Err(error)
         }
     }
 }
 
-fn run_forum_inner(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOptions) -> Result<usize> {
+fn run_forum_inner(
+    forum_config: &ForumConfig,
+    forum_path: &Path,
+    opts: &RunOptions,
+) -> Result<usize> {
     let mut prior_rounds: Vec<RoundData> = Vec::new();
     let review_mode = is_review_mode(forum_config);
 
@@ -117,7 +133,13 @@ fn run_forum_inner(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOpti
         }
 
         // Invoke participants and collect responses
-        let responses = invoke_participants(forum_config, &prompt, forum_path, round_num, opts.emit_events)?;
+        let responses = invoke_participants(
+            forum_config,
+            &prompt,
+            forum_path,
+            round_num,
+            opts.emit_events,
+        )?;
 
         if responses.is_empty() {
             anyhow::bail!("No responses received; forum cannot produce a final result.");
@@ -202,17 +224,20 @@ fn run_forum_inner(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOpti
         // Score per-participant alignment for position shift tracking (every round)
         if let Some(ref synth) = prior_rounds.last().and_then(|r| r.synthesis.clone()) {
             eprintln!("  Scoring alignment...");
-            match convergence::evaluate_alignment(&forum_config.convergence, &synth, &responses) {
+            match convergence::evaluate_alignment(&forum_config.convergence, synth, &responses) {
                 Ok(alignment) => {
-                let alignment_toml: String = alignment
-                    .iter()
-                    .map(|(k, v)| format!("{} = {:.1}", k, v))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let content = format!("[alignment]\nround = {}\n{}\n", round_num, alignment_toml);
-                substrate::write_atomic_toml(&round_dir.join("alignment.toml"), &content)?;
+                    let alignment_toml: String = alignment
+                        .iter()
+                        .map(|(k, v)| format!("{} = {:.1}", k, v))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let content =
+                        format!("[alignment]\nround = {}\n{}\n", round_num, alignment_toml);
+                    substrate::write_atomic_toml(&round_dir.join("alignment.toml"), &content)?;
                 }
-                Err(error) => eprintln!("  Warning: {error:#}; alignment scores will be unavailable for this round."),
+                Err(error) => eprintln!(
+                    "  Warning: {error:#}; alignment scores will be unavailable for this round."
+                ),
             }
         }
 
@@ -380,11 +405,15 @@ fn invoke_participants(
             let timeout = participant_timeout;
 
             std::thread::spawn(move || {
-                let result = substrate::invoke_command(&cmd_template, &prompt, timeout)
-                    .and_then(|response| {
-                        substrate::write_atomic(&round_dir.join(format!("{}.md", name)), &response)?;
+                let result = substrate::invoke_command(&cmd_template, &prompt, timeout).and_then(
+                    |response| {
+                        substrate::write_atomic(
+                            &round_dir.join(format!("{}.md", name)),
+                            &response,
+                        )?;
                         Ok(response)
-                    });
+                    },
+                );
                 tx.send((name, result)).ok();
             });
         }
@@ -394,7 +423,14 @@ fn invoke_participants(
         for (name, result) in rx {
             match result {
                 Ok(response) => {
-                    emit_participant_response(config, forum_path, round, &name, &response, emit_events)?;
+                    emit_participant_response(
+                        config,
+                        forum_path,
+                        round,
+                        &name,
+                        &response,
+                        emit_events,
+                    )?;
                     let words = response.split_whitespace().count();
                     eprintln!("  \u{2713} {} responded ({} words)", name, words);
                     responses.insert(name, response);
@@ -426,7 +462,10 @@ fn invoke_participants(
         eprintln!();
         for name in &manual_participants {
             eprintln!("  \u{23f3} Waiting for YOU ({})", name);
-            eprintln!("    Read your prompt: {}", prompts_dir.join(format!("{}.md", name)).display());
+            eprintln!(
+                "    Read your prompt: {}",
+                prompts_dir.join(format!("{}.md", name)).display()
+            );
         }
         eprintln!();
         eprintln!(
@@ -448,7 +487,9 @@ fn invoke_participants(
             &round_dir,
             &manual_participants,
             timeout,
-            |name, response| emit_participant_response(config, forum_path, round, name, response, emit_events),
+            |name, response| {
+                emit_participant_response(config, forum_path, round, name, response, emit_events)
+            },
         )?;
 
         let missing: Vec<&String> = manual_participants
@@ -694,8 +735,12 @@ fn write_final_output(
     // Reaching the stopping threshold does not imply unanimity. Inspect the
     // final positions even when the judge did not list any disagreements.
     let key_disagreements = match convergence_result {
-        ConvergenceResult::Converged { key_disagreements, .. }
-        | ConvergenceResult::Divergent { key_disagreements, .. } => key_disagreements,
+        ConvergenceResult::Converged {
+            key_disagreements, ..
+        }
+        | ConvergenceResult::Divergent {
+            key_disagreements, ..
+        } => key_disagreements,
     };
     let last_responses = rounds
         .last()
@@ -878,10 +923,10 @@ fn run_scoring(
 
 /// Detect review mode from output_format field or topic keywords
 fn is_review_mode(config: &ForumConfig) -> bool {
-    if let Some(ref fmt) = config.forum.output_format {
-        if fmt == "review" {
-            return true;
-        }
+    if let Some(ref fmt) = config.forum.output_format
+        && fmt == "review"
+    {
+        return true;
     }
     let topic_lower = config.forum.topic.to_lowercase();
     topic_lower.contains("code review")
@@ -895,14 +940,18 @@ mod tests {
 
     #[test]
     fn response_write_failure_aborts_without_a_response_event() {
-        let dir = std::env::temp_dir().join(format!("ting-test-response-write-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("ting-test-response-write-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("round-1/alice.md")).unwrap();
         let mut config = make_test_config("A write failure");
         config.participants.names = vec!["alice".into()];
-        config.participants.configs = HashMap::from([("alice".into(), ParticipantConfig {
-            participant_type: "command".into(),
-            command: Some("printf response".into()),
-        })]);
+        config.participants.configs = HashMap::from([(
+            "alice".into(),
+            ParticipantConfig {
+                participant_type: "command".into(),
+                command: Some("printf response".into()),
+            },
+        )]);
         let error = invoke_participants(&config, "Prompt", &dir, 1, true).unwrap_err();
         assert!(error.to_string().contains("alice"));
         assert!(error.to_string().contains("Aborting"));
@@ -913,34 +962,64 @@ mod tests {
     #[test]
     fn forum_emits_complete_lifecycle_only_when_enabled() {
         for enabled in [false, true] {
-            let dir = std::env::temp_dir().join(format!("ting-test-lifecycle-{}", uuid::Uuid::new_v4()));
+            let dir =
+                std::env::temp_dir().join(format!("ting-test-lifecycle-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&dir).unwrap();
             let mut config = make_test_config("A live topic");
             config.forum.max_rounds = 1;
             config.convergence.min_rounds = 1;
-            config.convergence.judge_command = Some("printf 'SCORE: 8\nSUMMARY: Agreement\nDISAGREEMENTS:\nALIGNMENT: alice=8 bob=8\n'".into());
+            config.convergence.judge_command = Some(
+                "printf 'SCORE: 8\nSUMMARY: Agreement\nDISAGREEMENTS:\nALIGNMENT: alice=8 bob=8\n'"
+                    .into(),
+            );
             config.synthesis.command = Some("printf 'A synthesis'".into());
             for participant in config.participants.configs.values_mut() {
                 participant.participant_type = "command".into();
                 participant.command = Some("printf 'A response'".into());
             }
-            run_forum(&config, &dir, &RunOptions { emit_events: enabled, ..RunOptions::default() }).unwrap();
+            run_forum(
+                &config,
+                &dir,
+                &RunOptions {
+                    emit_events: enabled,
+                    ..RunOptions::default()
+                },
+            )
+            .unwrap();
             assert!(substrate::is_completed(&dir));
-            assert_eq!(crate::run_status::read(&dir).unwrap().unwrap().status, crate::run_status::Status::Completed);
+            assert_eq!(
+                crate::run_status::read(&dir).unwrap().unwrap().status,
+                crate::run_status::Status::Completed
+            );
             if enabled {
                 let log = std::fs::read_to_string(events::event_log_path(&dir)).unwrap();
-                let events: Vec<events::DashboardEvent> = log.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
-                let schema: serde_json::Value = serde_json::from_str(include_str!("../schemas/dashboard-event.schema.json")).unwrap();
+                let events: Vec<events::DashboardEvent> = log
+                    .lines()
+                    .map(|line| serde_json::from_str(line).unwrap())
+                    .collect();
+                let schema: serde_json::Value =
+                    serde_json::from_str(include_str!("../schemas/dashboard-event.schema.json"))
+                        .unwrap();
                 let validator = jsonschema::validator_for(&schema).unwrap();
                 for (index, event) in events.iter().enumerate() {
                     assert_eq!(event.seq, index as u64 + 1);
                     assert!(validator.is_valid(&serde_json::to_value(event).unwrap()));
                 }
-                assert_eq!(events.iter().map(|event| event.event_type).collect::<Vec<_>>(), vec![
-                    EventType::ForumStarted, EventType::RoundStarted,
-                    EventType::ParticipantResponse, EventType::ParticipantResponse,
-                    EventType::Synthesis, EventType::Convergence, EventType::ForumComplete,
-                ]);
+                assert_eq!(
+                    events
+                        .iter()
+                        .map(|event| event.event_type)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        EventType::ForumStarted,
+                        EventType::RoundStarted,
+                        EventType::ParticipantResponse,
+                        EventType::ParticipantResponse,
+                        EventType::Synthesis,
+                        EventType::Convergence,
+                        EventType::ForumComplete,
+                    ]
+                );
                 assert_eq!(events[0].payload["topic"], "A live topic");
                 assert_eq!(events[0].payload["participants"], json!(["alice", "bob"]));
                 assert_eq!(events[1].payload["stage"], "proposal");
@@ -954,19 +1033,31 @@ mod tests {
 
     #[test]
     fn finalization_failure_is_never_reported_as_completed() {
-        let dir = std::env::temp_dir().join(format!("ting-test-finalization-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("ting-test-finalization-{}", uuid::Uuid::new_v4()));
         // A directory at the dissent destination forces a late write failure.
         std::fs::create_dir_all(dir.join("final/dissent.md")).unwrap();
         let mut config = make_test_config("A failed finalization");
         config.forum.max_rounds = 1;
         config.convergence.min_rounds = 1;
-        config.convergence.judge_command = Some("printf 'SCORE: 8\nSUMMARY: Agreement\nALIGNMENT: alice=8 bob=8\n'".into());
+        config.convergence.judge_command =
+            Some("printf 'SCORE: 8\nSUMMARY: Agreement\nALIGNMENT: alice=8 bob=8\n'".into());
         config.synthesis.command = Some("printf 'A synthesis'".into());
         for participant in config.participants.configs.values_mut() {
             participant.participant_type = "command".into();
             participant.command = Some("printf 'A response'".into());
         }
-        assert!(run_forum(&config, &dir, &RunOptions { emit_events: true, ..RunOptions::default() }).is_err());
+        assert!(
+            run_forum(
+                &config,
+                &dir,
+                &RunOptions {
+                    emit_events: true,
+                    ..RunOptions::default()
+                }
+            )
+            .is_err()
+        );
         assert!(dir.join("final/synthesis.md").exists());
         assert!(!substrate::is_completed(&dir));
         let record = crate::run_status::read(&dir).unwrap().unwrap();
@@ -979,14 +1070,33 @@ mod tests {
 
     #[test]
     fn participant_aliases_receive_distinct_persisted_identities() {
-        let dir = std::env::temp_dir().join(format!("ting-test-identities-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("ting-test-identities-{}", uuid::Uuid::new_v4()));
         let round_dir = substrate::create_round_dir(&dir, 2).unwrap();
         let mut config = make_test_config("Rollout strategy?");
         config.participants.names = vec!["optimist".into(), "skeptic".into(), "human".into()];
         config.participants.configs = HashMap::from([
-            ("optimist".into(), ParticipantConfig { participant_type: "command".into(), command: Some("cat".into()) }),
-            ("skeptic".into(), ParticipantConfig { participant_type: "command".into(), command: Some("cat".into()) }),
-            ("human".into(), ParticipantConfig { participant_type: "manual".into(), command: None }),
+            (
+                "optimist".into(),
+                ParticipantConfig {
+                    participant_type: "command".into(),
+                    command: Some("cat".into()),
+                },
+            ),
+            (
+                "skeptic".into(),
+                ParticipantConfig {
+                    participant_type: "command".into(),
+                    command: Some("cat".into()),
+                },
+            ),
+            (
+                "human".into(),
+                ParticipantConfig {
+                    participant_type: "manual".into(),
+                    command: None,
+                },
+            ),
         ]);
         config.timing.participant_timeout = "5s".into();
         std::fs::write(round_dir.join("human.md"), "Human response").unwrap();
@@ -1004,8 +1114,13 @@ mod tests {
         let shared_prompt = generate_crossexam_prompt(&config, &prior).unwrap();
         let responses = invoke_participants(&config, &shared_prompt, &dir, 2, true).unwrap();
         for name in &config.participants.names {
-            let saved = std::fs::read_to_string(round_dir.join("prompts").join(format!("{}.md", name))).unwrap();
-            assert!(saved.starts_with(&format!("# Your participant identity\n\nYou are participant `{}`", name)));
+            let saved =
+                std::fs::read_to_string(round_dir.join("prompts").join(format!("{}.md", name)))
+                    .unwrap();
+            assert!(saved.starts_with(&format!(
+                "# Your participant identity\n\nYou are participant `{}`",
+                name
+            )));
             assert!(saved.contains(&format!("- **{}** critiques **", name)));
             assert!(saved.ends_with(&shared_prompt));
             if name != "human" {
@@ -1015,7 +1130,10 @@ mod tests {
         assert_ne!(responses["optimist"], responses["skeptic"]);
         assert_eq!(responses["human"], "Human response");
         let log = std::fs::read_to_string(events::event_log_path(&dir)).unwrap();
-        let events: Vec<events::DashboardEvent> = log.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        let events: Vec<events::DashboardEvent> = log
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
         assert_eq!(events.len(), 3);
         for (index, event) in events.iter().enumerate() {
             assert_eq!(event.seq, index as u64 + 1);
@@ -1032,10 +1150,15 @@ mod tests {
         for (score, objections, warning) in [
             (8.0, vec!["Rollout remains disputed".to_string()], None),
             (8.0, Vec::new(), None),
-            (8.0, Vec::new(), Some("> **Hollow consensus detected.** Contested claims remain.")),
+            (
+                8.0,
+                Vec::new(),
+                Some("> **Hollow consensus detected.** Contested claims remain."),
+            ),
             (4.0, vec!["Rollout remains disputed".to_string()], None),
         ] {
-            let dir = std::env::temp_dir().join(format!("ting-test-dissent-{}", uuid::Uuid::new_v4()));
+            let dir =
+                std::env::temp_dir().join(format!("ting-test-dissent-{}", uuid::Uuid::new_v4()));
             let mut config = make_test_config("Rollout strategy?");
             config.synthesis.command = Some("cat".into());
             let result = if score >= 7.0 {
@@ -1045,7 +1168,10 @@ mod tests {
                     key_disagreements: objections.clone(),
                 }
             } else {
-                ConvergenceResult::Divergent { score, key_disagreements: objections.clone() }
+                ConvergenceResult::Divergent {
+                    score,
+                    key_disagreements: objections.clone(),
+                }
             };
             let rounds = vec![RoundData {
                 number: 2,
@@ -1071,7 +1197,11 @@ mod tests {
                 assert!(dissent.starts_with(warning));
             }
             let summary = std::fs::read_to_string(dir.join("final/meta-summary.toml")).unwrap();
-            let expected_status = if score >= 7.0 { "converged" } else { "divergent" };
+            let expected_status = if score >= 7.0 {
+                "converged"
+            } else {
+                "divergent"
+            };
             assert!(summary.contains(&format!("status = \"{}\"", expected_status)));
             // A sentence about one settled issue must not hide other dissent.
             std::fs::write(
@@ -1159,10 +1289,8 @@ mod tests {
     fn test_invoke_participants_fails_loud_when_command_fails() {
         // A requested command participant that errors must abort the round
         // rather than silently dropping the participant from the synthesis.
-        let dir = std::env::temp_dir().join(format!(
-            "ting-test-fail-loud-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("ting-test-fail-loud-{}", uuid::Uuid::new_v4()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("round-0")).unwrap();
 

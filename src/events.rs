@@ -97,12 +97,7 @@ pub fn event_log_path(forum_dir: &Path) -> PathBuf {
 }
 
 /// Assign the next `seq`, wrap as a `DashboardEvent`, and append to the log.
-pub fn emit(
-    forum_dir: &Path,
-    forum_id: &str,
-    event_type: EventType,
-    payload: Value,
-) -> Result<()> {
+pub fn emit(forum_dir: &Path, forum_id: &str, event_type: EventType, payload: Value) -> Result<()> {
     let seq = next_seq(forum_dir)?;
     let event = DashboardEvent::new(seq, forum_id, event_type, payload);
     append_event(forum_dir, &event)
@@ -468,16 +463,37 @@ mod tests {
     #[test]
     fn emit_assigns_monotonic_seq_across_calls() {
         let dir = tmp_dir("emit-seq");
-        emit(&dir, "fid", EventType::Synthesis, json!({ "round": 1, "word_count": 42 })).unwrap();
-        emit(&dir, "fid", EventType::Convergence, json!({ "round": 2, "score": 7.5 })).unwrap();
-        emit(&dir, "fid", EventType::ForumComplete, json!({ "rounds_used": 2 })).unwrap();
+        emit(
+            &dir,
+            "fid",
+            EventType::Synthesis,
+            json!({ "round": 1, "word_count": 42 }),
+        )
+        .unwrap();
+        emit(
+            &dir,
+            "fid",
+            EventType::Convergence,
+            json!({ "round": 2, "score": 7.5 }),
+        )
+        .unwrap();
+        emit(
+            &dir,
+            "fid",
+            EventType::ForumComplete,
+            json!({ "rounds_used": 2 }),
+        )
+        .unwrap();
 
         let body = fs::read_to_string(event_log_path(&dir)).unwrap();
         let events: Vec<DashboardEvent> = body
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())
             .collect();
-        assert_eq!(events.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert_eq!(
+            events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
         assert_eq!(events[0].event_type, EventType::Synthesis);
         assert_eq!(events[1].event_type, EventType::Convergence);
         assert_eq!(events[2].event_type, EventType::ForumComplete);

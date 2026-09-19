@@ -17,8 +17,12 @@ fn evaluate_with_retry<T>(
     for attempt in 1..=2 {
         match invoke().and_then(|output| parse(&output)) {
             Ok(value) => return Ok(value),
-            Err(error) if attempt == 1 => eprintln!("  Warning: {label} attempt failed: {error:#}. Retrying once."),
-            Err(error) => return Err(error).with_context(|| format!("{label} unavailable after 2 attempts")),
+            Err(error) if attempt == 1 => {
+                eprintln!("  Warning: {label} attempt failed: {error:#}. Retrying once.")
+            }
+            Err(error) => {
+                return Err(error).with_context(|| format!("{label} unavailable after 2 attempts"));
+            }
         }
     }
     unreachable!()
@@ -27,7 +31,10 @@ fn evaluate_with_retry<T>(
 /// Both convergence and alignment use finite values on the closed 1–10 scale.
 fn parse_score(raw: &str) -> Result<f32> {
     let score: f32 = raw.trim().parse().context("Invalid numeric score")?;
-    anyhow::ensure!(score.is_finite() && (1.0..=10.0).contains(&score), "Score must be finite and within 1–10");
+    anyhow::ensure!(
+        score.is_finite() && (1.0..=10.0).contains(&score),
+        "Score must be finite and within 1–10"
+    );
     Ok(score)
 }
 
@@ -77,24 +84,32 @@ pub fn evaluate_alignment(
     )
 }
 
-fn parse_alignment_scores(
-    output: &str,
-    expected: &[&String],
-) -> Result<AlignmentScores> {
+fn parse_alignment_scores(output: &str, expected: &[&String]) -> Result<AlignmentScores> {
     let mut scores = AlignmentScores::new();
-    let mut lines = output.lines().filter_map(|line| line.trim().strip_prefix("ALIGNMENT:"));
+    let mut lines = output
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("ALIGNMENT:"));
     let line = lines.next().context("Missing ALIGNMENT line")?;
     anyhow::ensure!(lines.next().is_none(), "Duplicate ALIGNMENT lines");
 
     for token in line.split_whitespace() {
         let (name, value) = token.split_once('=').context("Malformed alignment entry")?;
-        anyhow::ensure!(expected.iter().any(|expected| expected.as_str() == name), "Unknown alignment participant: {name}");
+        anyhow::ensure!(
+            expected.iter().any(|expected| expected.as_str() == name),
+            "Unknown alignment participant: {name}"
+        );
         let score = parse_score(value)?;
-        anyhow::ensure!(scores.insert(name.to_string(), score).is_none(), "Duplicate alignment participant: {name}");
+        anyhow::ensure!(
+            scores.insert(name.to_string(), score).is_none(),
+            "Duplicate alignment participant: {name}"
+        );
     }
 
     for name in expected {
-        anyhow::ensure!(scores.contains_key(name.as_str()), "Missing alignment score for {name}");
+        anyhow::ensure!(
+            scores.contains_key(name.as_str()),
+            "Missing alignment score for {name}"
+        );
     }
     Ok(scores)
 }
@@ -201,7 +216,11 @@ DISAGREEMENTS:
 
         let result = parse_judge_response(output, 7).unwrap();
         match result {
-            ConvergenceResult::Converged { score, summary, key_disagreements } => {
+            ConvergenceResult::Converged {
+                score,
+                summary,
+                key_disagreements,
+            } => {
                 assert!((score - 8.5).abs() < 0.01);
                 assert!(summary.contains("Strong agreement"));
                 assert_eq!(key_disagreements, ["Minor difference on timing of rollout"]);
@@ -243,7 +262,16 @@ DISAGREEMENTS:
 
     #[test]
     fn invalid_judgments_are_errors_instead_of_plausible_scores() {
-        for raw in ["SCORE: nan", "SCORE: inf", "SCORE: -inf", "SCORE: 0", "SCORE: 11", "SCORE: nope", "No score", "SCORE: 7\nSCORE: 8"] {
+        for raw in [
+            "SCORE: nan",
+            "SCORE: inf",
+            "SCORE: -inf",
+            "SCORE: 0",
+            "SCORE: 11",
+            "SCORE: nope",
+            "No score",
+            "SCORE: 7\nSCORE: 8",
+        ] {
             assert!(parse_judge_response(raw, 7).is_err(), "accepted {raw:?}");
         }
         for raw in ["SCORE: 1", "SCORE: 10", "SCORE: 7.5"] {
@@ -259,12 +287,20 @@ DISAGREEMENTS:
         assert_eq!(valid["alice"], 7.5);
         assert_eq!(valid["bob"], 1.0);
         for raw in [
-            "No scores", "ALIGNMENT: alice=8", "ALIGNMENT: alice=8 bob=NaN",
-            "ALIGNMENT: alice=0 bob=8", "ALIGNMENT: alice=8 bob=11",
-            "ALIGNMENT: alice=8 bob=8 charlie=8", "ALIGNMENT: alice=8 alice=9 bob=8",
-            "ALIGNMENT: alice=8 bob=8 extra", "ALIGNMENT: alice=8 bob=8\nALIGNMENT: alice=9 bob=9",
+            "No scores",
+            "ALIGNMENT: alice=8",
+            "ALIGNMENT: alice=8 bob=NaN",
+            "ALIGNMENT: alice=0 bob=8",
+            "ALIGNMENT: alice=8 bob=11",
+            "ALIGNMENT: alice=8 bob=8 charlie=8",
+            "ALIGNMENT: alice=8 alice=9 bob=8",
+            "ALIGNMENT: alice=8 bob=8 extra",
+            "ALIGNMENT: alice=8 bob=8\nALIGNMENT: alice=9 bob=9",
         ] {
-            assert!(parse_alignment_scores(raw, &expected).is_err(), "accepted {raw:?}");
+            assert!(
+                parse_alignment_scores(raw, &expected).is_err(),
+                "accepted {raw:?}"
+            );
         }
     }
 
@@ -272,19 +308,27 @@ DISAGREEMENTS:
     fn invalid_judgment_retries_once_then_recovers_or_reports_unavailable() {
         let mut calls = 0;
         let value = evaluate_with_retry(
-            || { calls += 1; Ok(if calls == 1 { "invalid" } else { "SCORE: 8" }.to_string()) },
+            || {
+                calls += 1;
+                Ok(if calls == 1 { "invalid" } else { "SCORE: 8" }.to_string())
+            },
             |output| parse_judge_response(output, 7),
             "Convergence evaluation",
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(calls, 2);
         assert_eq!(value.score(), 8.0);
 
         calls = 0;
         let error = evaluate_with_retry(
-            || { calls += 1; Ok("invalid".to_string()) },
+            || {
+                calls += 1;
+                Ok("invalid".to_string())
+            },
             |output| parse_judge_response(output, 7),
             "Convergence evaluation",
-        ).unwrap_err();
+        )
+        .unwrap_err();
         assert_eq!(calls, 2);
         assert!(format!("{error:#}").contains("unavailable after 2 attempts"));
         assert!(format!("{error:#}").contains("Missing SCORE"));

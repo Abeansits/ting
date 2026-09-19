@@ -45,8 +45,13 @@ pub fn write_atomic(path: &Path, content: &str) -> Result<()> {
     let tmp_path = path.with_extension("md.tmp");
     fs::write(&tmp_path, content)
         .with_context(|| format!("Failed to write temp file: {}", tmp_path.display()))?;
-    fs::rename(&tmp_path, path)
-        .with_context(|| format!("Failed to rename {} -> {}", tmp_path.display(), path.display()))?;
+    fs::rename(&tmp_path, path).with_context(|| {
+        format!(
+            "Failed to rename {} -> {}",
+            tmp_path.display(),
+            path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -55,8 +60,13 @@ pub fn write_atomic_toml(path: &Path, content: &str) -> Result<()> {
     let tmp_path = path.with_extension("toml.tmp");
     fs::write(&tmp_path, content)
         .with_context(|| format!("Failed to write temp file: {}", tmp_path.display()))?;
-    fs::rename(&tmp_path, path)
-        .with_context(|| format!("Failed to rename {} -> {}", tmp_path.display(), path.display()))?;
+    fs::rename(&tmp_path, path).with_context(|| {
+        format!(
+            "Failed to rename {} -> {}",
+            tmp_path.display(),
+            path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -64,6 +74,7 @@ pub fn read_file(path: &Path) -> Result<String> {
     fs::read_to_string(path).with_context(|| format!("Failed to read: {}", path.display()))
 }
 
+#[cfg(test)]
 pub fn read_response(forum: &Path, round: u32, participant: &str) -> Result<Option<String>> {
     let path = forum
         .join(format!("round-{}", round))
@@ -75,6 +86,7 @@ pub fn read_response(forum: &Path, round: u32, participant: &str) -> Result<Opti
     }
 }
 
+#[cfg(test)]
 pub fn read_all_responses(
     forum: &Path,
     round: u32,
@@ -148,36 +160,34 @@ where
         match rx.recv_timeout(wait_time) {
             Ok(Ok(event)) => {
                 for path in &event.paths {
-                    if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                        if let Some(name) = filename.strip_suffix(".md") {
-                            if expected.contains(&name.to_string())
-                                && !responses.contains_key(name)
-                                && !name.ends_with(".tmp") // ignore temp files
+                    if let Some(filename) = path.file_name().and_then(|f| f.to_str())
+                        && let Some(name) = filename.strip_suffix(".md")
+                        && expected.contains(&name.to_string())
+                        && !responses.contains_key(name)
+                        && !name.ends_with(".tmp")
+                    // ignore temp files
+                    {
+                        // Retry with bounded backoff for atomic rename
+                        let mut read_ok = false;
+                        for delay_ms in [10, 50, 100, 200] {
+                            std::thread::sleep(Duration::from_millis(delay_ms));
+                            if path.exists()
+                                && let Ok(content) = read_file(path)
+                                && !content.is_empty()
                             {
-                                // Retry with bounded backoff for atomic rename
-                                let mut read_ok = false;
-                                for delay_ms in [10, 50, 100, 200] {
-                                    std::thread::sleep(Duration::from_millis(delay_ms));
-                                    if path.exists() {
-                                        if let Ok(content) = read_file(path) {
-                                            if !content.is_empty() {
-                                                if is_tty {
-                                                    eprint!("\r\x1b[K"); // clear countdown line
-                                                }
-                                                let words = content.split_whitespace().count();
-                                                eprintln!("  \u{2713} {} responded ({} words)", name, words);
-                                                on_response(name, &content)?;
-                                                responses.insert(name.to_string(), content);
-                                                read_ok = true;
-                                                break;
-                                            }
-                                        }
-                                    }
+                                if is_tty {
+                                    eprint!("\r\x1b[K"); // clear countdown line
                                 }
-                                if !read_ok {
-                                    eprintln!("  Warning: could not read response from {}", name);
-                                }
+                                let words = content.split_whitespace().count();
+                                eprintln!("  \u{2713} {} responded ({} words)", name, words);
+                                on_response(name, &content)?;
+                                responses.insert(name.to_string(), content);
+                                read_ok = true;
+                                break;
                             }
+                        }
+                        if !read_ok {
+                            eprintln!("  Warning: could not read response from {}", name);
                         }
                     }
                 }
@@ -211,7 +221,10 @@ fn print_countdown(is_tty: bool, remaining: Duration) {
     }
     let mins = remaining.as_secs() / 60;
     let secs = remaining.as_secs() % 60;
-    eprint!("\r  Watching for your file... (timeout in {}m{:02}s)  ", mins, secs);
+    eprint!(
+        "\r  Watching for your file... (timeout in {}m{:02}s)  ",
+        mins, secs
+    );
 }
 
 /// List all forum IDs and their directory paths
@@ -226,10 +239,10 @@ pub fn list_forums() -> Result<Vec<(String, PathBuf)>> {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
             let meta_path = entry.path().join("meta.toml");
-            if meta_path.exists() {
-                if let Some(name) = entry.file_name().to_str() {
-                    forums.push((name.to_string(), entry.path()));
-                }
+            if meta_path.exists()
+                && let Some(name) = entry.file_name().to_str()
+            {
+                forums.push((name.to_string(), entry.path()));
             }
         }
     }
@@ -276,14 +289,9 @@ pub fn is_completed(forum: &Path) -> bool {
 ///   - Claude:   `cat {prompt_file} | claude -p -`    (pipe from file, no shell expansion)
 ///   - OpenCode: `opencode run`                       (reads stdin)
 ///   - Any CLI:  `cat {prompt_file} | some-cli`       (pipe through cat)
-pub fn invoke_command(
-    command_template: &str,
-    prompt: &str,
-    timeout: Duration,
-) -> Result<String> {
+pub fn invoke_command(command_template: &str, prompt: &str, timeout: Duration) -> Result<String> {
     let tmp_file = std::env::temp_dir().join(format!("ting-{}.md", uuid::Uuid::new_v4()));
-    fs::write(&tmp_file, prompt)
-        .with_context(|| "Failed to write prompt temp file")?;
+    fs::write(&tmp_file, prompt).with_context(|| "Failed to write prompt temp file")?;
 
     // Guard: clean up temp file on all exit paths
     let tmp_file_cleanup = tmp_file.clone();
@@ -291,8 +299,7 @@ pub fn invoke_command(
 
     // If command uses {prompt_file}, substitute it and DON'T pipe stdin (avoid double delivery)
     let uses_prompt_file = command_template.contains("{prompt_file}");
-    let command = command_template
-        .replace("{prompt_file}", &tmp_file.display().to_string());
+    let command = command_template.replace("{prompt_file}", &tmp_file.display().to_string());
 
     let prompt_for_stdin = if uses_prompt_file {
         None
@@ -334,7 +341,8 @@ fn invoke_process(
         cmd.process_group(0);
     }
 
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .with_context(|| format!("Failed to execute: {}", description))?;
     let pid = child.id();
     let stdin = child.stdin.take();
@@ -400,10 +408,14 @@ fn invoke_process(
 struct CleanupGuard(Option<std::path::PathBuf>);
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
-        if let Some(ref path) = self.0 {
-            if let Err(e) = fs::remove_file(path) {
-                eprintln!("  Warning: failed to clean up temp file {}: {}", path.display(), e);
-            }
+        if let Some(ref path) = self.0
+            && let Err(e) = fs::remove_file(path)
+        {
+            eprintln!(
+                "  Warning: failed to clean up temp file {}: {}",
+                path.display(),
+                e
+            );
         }
     }
 }
@@ -443,7 +455,8 @@ mod tests {
 
     #[test]
     fn manual_response_notifies_before_all_participants_finish() {
-        let dir = std::env::temp_dir().join(format!("ting-test-response-event-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("ting-test-response-event-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("alice.md"), "Already here").unwrap();
         let mut seen = Vec::new();
@@ -455,7 +468,8 @@ mod tests {
                 seen.push((name.to_owned(), response.to_owned()));
                 Ok(())
             },
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(seen, vec![("alice".into(), "Already here".into())]);
         assert_eq!(responses.len(), 1);
         fs::remove_dir_all(dir).unwrap();
@@ -471,11 +485,12 @@ mod tests {
             "-c",
             "sh -c 'sleep 1; printf survived > \"$1\"' sh \"$1\" & wait",
             "sh",
-        ]).arg(&marker);
+        ])
+        .arg(&marker);
 
         let started = Instant::now();
-        let error = invoke_process(cmd, None, Duration::from_millis(100), "fake model")
-            .unwrap_err();
+        let error =
+            invoke_process(cmd, None, Duration::from_millis(100), "fake model").unwrap_err();
         assert!(error.to_string().contains("timed out"));
         assert!(error.to_string().contains("fake model"));
         assert!(started.elapsed() < Duration::from_secs(3));
@@ -576,7 +591,12 @@ mod tests {
             fs::write(final_dir.join(name), "done").unwrap();
         }
         assert!(is_completed(&dir));
-        crate::run_status::write(&dir, crate::run_status::Status::Failed, Some("finalization failed".into())).unwrap();
+        crate::run_status::write(
+            &dir,
+            crate::run_status::Status::Failed,
+            Some("finalization failed".into()),
+        )
+        .unwrap();
         assert!(!is_completed(&dir));
 
         fs::remove_dir_all(&dir).ok();
@@ -592,7 +612,11 @@ mod tests {
         fs::write(round_dir.join("alice.md"), "Alice's response").unwrap();
         fs::write(round_dir.join("bob.md"), "Bob's response").unwrap();
 
-        let participants = vec!["alice".to_string(), "bob".to_string(), "charlie".to_string()];
+        let participants = vec![
+            "alice".to_string(),
+            "bob".to_string(),
+            "charlie".to_string(),
+        ];
         let responses = read_all_responses(&dir, 1, &participants).unwrap();
 
         assert_eq!(responses.len(), 2);
@@ -650,6 +674,10 @@ mod tests {
         let result = invoke_command("sleep 30", "ignored", Duration::from_secs(1));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("timed out"), "Expected timeout error, got: {}", err);
+        assert!(
+            err.contains("timed out"),
+            "Expected timeout error, got: {}",
+            err
+        );
     }
 }
