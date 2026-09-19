@@ -132,7 +132,8 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 ### OSS-01 · License and package identity
 
 - [ ] Choose and add a license.
-- [ ] Add matching Cargo license metadata and useful package description/repository metadata.
+- [ ] Add matching Cargo license metadata (awaiting maintainer choice).
+- [x] Add useful package description/repository metadata (#21).
 
 **Done when:** visitors and package consumers can clearly identify the project's reuse terms.
 
@@ -140,7 +141,9 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 - [x] Fix the source-install quick start: clone, enter the repository, then `cargo install --path . --locked`.
 - [ ] Publish macOS and Linux binaries with checksums.
-- [ ] Document supported platforms and the tested minimum Rust version.
+- [x] Document supported platforms and the tested minimum Rust version.
+
+**Release progress:** native packaging for Linux x86-64/ARM64 and macOS Intel/Apple Silicon is being added with checksums and build provenance. Tag-triggered releases remain drafts and require a chosen project license. Public binary publication is still pending; build artifacts do not satisfy this item.
 
 **Evidence:** `cargo build --release` in the current quick start does not put `ting` on `PATH`; v0.4.1 has no attached binaries.
 

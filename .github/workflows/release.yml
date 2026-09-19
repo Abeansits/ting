@@ -1,0 +1,102 @@
+name: Release binaries
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'scripts/package-release.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install Rust
+        run: rustup toolchain install 1.88.0 --profile minimal --target '${{ matrix.target }}'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: tui/go.mod
+          cache-dependency-path: tui/go.sum
+      - name: Build CLI
+        run: cargo +1.88.0 build --locked --release --target '${{ matrix.target }}'
+      - name: Build TUI
+        working-directory: tui
+        run: go build -o ../target/ting-tui .
+      - name: Package
+        env:
+          RUSTUP_TOOLCHAIN: '1.88.0'
+        run: python3 scripts/package-release.py --target '${{ matrix.target }}' --tui-binary target/ting-tui
+      - name: Verify packaged CLI and checksum
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib, subprocess, tarfile, tempfile
+          archive, = pathlib.Path('dist').glob('*.tar.gz')
+          expected = pathlib.Path(str(archive) + '.sha256').read_text().split()[0]
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected
+          with tempfile.TemporaryDirectory() as temp:
+              with tarfile.open(archive) as package:
+                  package.extractall(temp, filter='data')
+              binary, = pathlib.Path(temp).glob('*/bin/ting')
+              info = json.loads((binary.parent.parent / 'BUILD-INFO.json').read_text())
+              assert not info['dirty'], 'CI packages must come from a clean checkout'
+              assert hashlib.sha256(binary.read_bytes()).hexdigest() == info['sha256']['bin/ting']
+              tui = binary.parent / 'ting-tui'
+              assert hashlib.sha256(tui.read_bytes()).hexdigest() == info['sha256']['bin/ting-tui']
+              subprocess.run([str(binary), '--version'], check=True)
+              forum = pathlib.Path(temp) / 'demo'
+              subprocess.run([str(binary), 'demo', '--output', str(forum), '--no-serve'], check=True)
+              subprocess.run([str(binary), 'result', str(forum), '--html'], check=True)
+              assert (forum / 'final/report.html').is_file()
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ting-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  draft-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Validate release tag and license
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--no-deps', '--format-version', '1']))
+          package = next(item for item in metadata['packages'] if item['name'] == 'ting')
+          assert os.environ['GITHUB_REF_NAME'] == 'v' + package['version'], 'Tag must match Cargo.toml'
+          assert package.get('license') and pathlib.Path('LICENSE').is_file(), 'Choose and record the project license before releasing'
+          PY
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: ting-*
+          path: dist
+          merge-multiple: true
+      - name: Create draft with binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --title "Ting $GITHUB_REF_NAME" --generate-notes
