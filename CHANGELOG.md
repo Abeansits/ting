@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Enforce the configured Fire Keeper deadline for default Claude calls as well
+  as custom commands. Both use the same process runner, which terminates the
+  process group on timeout and reaps the child before returning. Zero-duration
+  timeouts can no longer race with publication of the child PID.
 - Preserve judge-identified disagreements after convergence and always examine
   final participant positions when generating dissent. Reaching the stopping
   threshold no longer implies unanimity. Hollow-consensus warnings also appear
