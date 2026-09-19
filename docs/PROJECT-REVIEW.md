@@ -133,8 +133,8 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### OSS-01 · License and package identity
 
-- [ ] Choose and add a license.
-- [ ] Add matching Cargo license metadata (awaiting maintainer choice).
+- [x] Choose and add a license (MIT, selected by the maintainer).
+- [x] Add matching Cargo license metadata.
 - [x] Add useful package description/repository metadata (#21).
 
 **Done when:** visitors and package consumers can clearly identify the project's reuse terms.
