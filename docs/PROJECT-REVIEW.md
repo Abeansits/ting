@@ -146,9 +146,11 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### OSS-03 · No-account demo
 
-- [ ] Bundle a safe, representative sample forum.
-- [ ] Add `ting demo` to explore it without model credentials.
-- [ ] Include synthesis, meaningful dissent, and changes after cross-examination.
+- [x] Bundle a safe, representative sample forum.
+- [x] Add `ting demo` to explore it without model credentials.
+- [x] Include synthesis, meaningful dissent, and changes after cross-examination.
+
+**Implementation:** the embedded, hand-written sample is labeled illustrative and creates a standard session. It prints synthesis/dissent and serves the dashboard, or exits with `--no-serve`. Smoke-tested with an empty executable PATH; schema and overwrite tests run in the Rust suite.
 
 **Done when:** visitors can experience the product before installing or authenticating participant CLIs.
 
@@ -173,7 +175,7 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 - [x] Apply formatting and enforce `cargo fmt --check` in CI.
 - [x] Add Clippy and a declared/tested minimum Rust version.
-- [ ] Test supported platforms (Linux/macOS CI matrix added; awaiting results).
+- [x] Test supported platforms (Linux/macOS matrix passed in #21).
 - [x] Add meaningful regression coverage for the reliability findings above.
 
 **Implementation:** all 152 Rust tests pass locally on Rust 1.88.0. Style checks use Rust 1.92.0; formatting and Clippy pass. CI includes Linux minimum/stable Rust, macOS stable Rust, Node reducer tests, and Go race tests on both platforms. Workflows also run for stacked PRs.

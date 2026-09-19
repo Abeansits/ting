@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ting demo`: an embedded, hand-written two-round sample with disagreement,
+  revision, metrics, and final dissent. No model CLIs or API keys are needed.
+  Use `--no-serve` to create the sample without starting the dashboard.
 - Contributor guide, bug/feature and PR templates, and support/security guidance.
 - Formatting and Clippy checks, a tested Rust 1.88 minimum, and Linux/macOS CI
   coverage for Rust and the Go TUI. Stacked PRs now receive CI too.

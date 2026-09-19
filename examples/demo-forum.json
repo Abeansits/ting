@@ -1,0 +1,39 @@
+{
+  "topic": "Demo: should a three-person team add a message queue for email delivery?",
+  "participants": ["pragmatist", "reliability", "operator"],
+  "metrics": [
+    {"id":"dissent_axis","name":"Remaining disagreement","scale":10,"description":"How much substantive disagreement remains; higher means more dissent.","mandatory":true},
+    {"id":"simplicity","name":"Operational simplicity","scale":10,"description":"How manageable the proposed system is for a small team."},
+    {"id":"reliability","name":"Delivery reliability","scale":10,"description":"How well the proposal handles outages, retries, and duplicate delivery."},
+    {"id":"cost","name":"Cost fit","scale":10,"description":"How well the proposal fits the team's budget and current scale."},
+    {"id":"reversibility","name":"Reversibility","scale":10,"description":"How easily the team can change direction later."},
+    {"id":"actionability","name":"Actionability","scale":10,"description":"How concrete and testable the next steps are."}
+  ],
+  "rounds": [
+    {
+      "prompt": "Illustrative sample, not a live model run. Independently propose an email-delivery design for a small team. Consider failures, operating cost, and what would justify a larger system.",
+      "responses": {
+        "pragmatist": "Use the existing database and a background job. A new message broker adds another service to operate before we have evidence that we need it. Start simple, but do not send email inside the request transaction.",
+        "reliability": "Use a managed queue. An email-provider outage should not block requests or lose jobs. We need durable retries, a dead-letter path, and idempotency before launch.",
+        "operator": "A database-backed outbox can provide durable retries without a separate broker. My concern is operational ownership: who notices a stuck delivery, and how do they safely retry it?"
+      },
+      "synthesis": "## Initial positions\n\nEveryone wants durable, asynchronous email delivery. The disagreement is whether that requires a managed queue immediately.\n\n- The pragmatist favors fewer services.\n- Reliability favors explicit failure handling from day one.\n- The operator proposes an outbox but requires an owner and a recovery procedure.\n\nThe next round should test the outbox against the same reliability requirements as a managed queue.",
+      "claims": "[[claims]]\nid = \"durable-delivery\"\ntext = \"Email jobs must survive provider failures\"\n[claims.stances]\npragmatist = \"support\"\nreliability = \"support\"\noperator = \"support\"\n",
+      "score": 5.5,
+      "scores": {"dissent_axis":6,"simplicity":6,"reliability":6,"cost":7,"reversibility":7,"actionability":5}
+    },
+    {
+      "prompt": "Illustrative cross-examination: pragmatist critiques reliability; reliability critiques operator; operator critiques pragmatist. Test outage recovery and revise your recommendation.",
+      "responses": {
+        "pragmatist": "I revise my proposal: use a transactional outbox, not an informal background task. A worker claims jobs, retries with backoff, and records exhausted attempts. Add an idempotency key. This keeps one datastore while meeting the strongest objections.",
+        "reliability": "The revised outbox design addresses durability and duplicates. I can support it if a provider-outage drill proves recovery before launch. I still prefer a managed queue because retry isolation and backpressure are easier to reason about there.",
+        "operator": "I support the outbox with an explicit owner, an oldest-pending-job alert, and a documented retry command. Review the design when backlog age exceeds our agreed delivery objective under expected load. Avoid a migration based only on a speculative traffic number."
+      },
+      "synthesis": "## Recommendation\n\nStart with a transactional outbox in the existing database. Use a separate worker, idempotency keys, bounded retries, and an explicit failure queue or status.\n\n## What changed\n\nThe initial background-job proposal gained durable job storage and a concrete failure model after cross-examination. The queue advocate accepted this smaller design conditionally.\n\n## Next steps\n\n1. Implement the outbox and worker.\n2. Assign an owner and alert on the age of pending jobs.\n3. Run an email-provider outage drill before launch.\n4. Revisit a managed queue when measured backlog and isolation requirements justify it.\n\nAgreement is sufficient to proceed, but one participant still prefers a managed queue.",
+      "claims": "[[claims]]\nid = \"outbox-first\"\ntext = \"Start with a transactional outbox and a tested recovery procedure\"\n[claims.stances]\npragmatist = \"support\"\nreliability = \"neutral\"\noperator = \"support\"\n",
+      "score": 8,
+      "scores": {"dissent_axis":3,"simplicity":8,"reliability":8,"cost":9,"reversibility":8,"actionability":9}
+    }
+  ],
+  "dissent": "# Dissent\n\nThe reliability participant still prefers a managed queue for clearer retry isolation and backpressure. Their support for the outbox is conditional on a successful provider-outage drill before launch.\n\nThis is a remaining architectural preference and a concrete release condition, not unanimity. Preserve it when implementing the recommendation.\n\n---\n\nThis forum is a hand-written illustration bundled with Ting. The participants and scores are sample data, not evaluations from live models."
+}
