@@ -92,11 +92,15 @@ pub fn read_all_responses(
 /// Watch a directory for expected participant response files using notify.
 /// Returns collected responses when all are present or timeout is reached.
 /// Shows a live countdown on TTY and word count per response.
-pub fn watch_for_responses(
+pub fn watch_for_responses<F>(
     round_dir: &Path,
     expected: &[String],
     timeout: Duration,
-) -> Result<HashMap<String, String>> {
+    mut on_response: F,
+) -> Result<HashMap<String, String>>
+where
+    F: FnMut(&str, &str) -> Result<()>,
+{
     let mut responses = HashMap::new();
     let start = Instant::now();
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
@@ -117,6 +121,7 @@ pub fn watch_for_responses(
             let content = read_file(&path)?;
             let words = content.split_whitespace().count();
             eprintln!("  \u{2713} {} responded ({} words)", name, words);
+            on_response(name, &content)?;
             responses.insert(name.clone(), content);
         }
     }
@@ -161,6 +166,7 @@ pub fn watch_for_responses(
                                                 }
                                                 let words = content.split_whitespace().count();
                                                 eprintln!("  \u{2713} {} responded ({} words)", name, words);
+                                                on_response(name, &content)?;
                                                 responses.insert(name.to_string(), content);
                                                 read_ok = true;
                                                 break;
@@ -429,6 +435,26 @@ fn invoke_claude(model: &str, prompt: &str, timeout: Duration) -> Result<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_response_notifies_before_all_participants_finish() {
+        let dir = std::env::temp_dir().join(format!("ting-test-response-event-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("alice.md"), "Already here").unwrap();
+        let mut seen = Vec::new();
+        let responses = watch_for_responses(
+            &dir,
+            &["alice".into(), "bob".into()],
+            Duration::from_millis(20),
+            |name, response| {
+                seen.push((name.to_owned(), response.to_owned()));
+                Ok(())
+            },
+        ).unwrap();
+        assert_eq!(seen, vec![("alice".into(), "Already here".into())]);
+        assert_eq!(responses.len(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn direct_process_enforces_deadline_and_kills_descendants() {

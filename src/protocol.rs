@@ -32,6 +32,19 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
     // Warn if judge model family overlaps with participants
     warn_judge_overlap(forum_config);
 
+    if opts.emit_events {
+        events::emit(
+            forum_path,
+            &forum_config.forum.id,
+            EventType::ForumStarted,
+            json!({
+                "topic": forum_config.forum.topic,
+                "participants": forum_config.participants.names,
+                "max_rounds": forum_config.forum.max_rounds,
+            }),
+        )?;
+    }
+
     let classifier_metrics = if opts.classify {
         Some(run_classifier(forum_config, forum_path)?)
     } else {
@@ -61,9 +74,17 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
         let round_dir = substrate::create_round_dir(forum_path, round_num)?;
         substrate::write_atomic(&round_dir.join("prompt.md"), &prompt)?;
         eprintln!("  Wrote round-{}/prompt.md", round_num);
+        if opts.emit_events {
+            events::emit(
+                forum_path,
+                &forum_config.forum.id,
+                EventType::RoundStarted,
+                json!({ "round": round_num, "stage": stage.to_string() }),
+            )?;
+        }
 
         // Invoke participants and collect responses
-        let responses = invoke_participants(forum_config, &prompt, forum_path, round_num)?;
+        let responses = invoke_participants(forum_config, &prompt, forum_path, round_num, opts.emit_events)?;
 
         if responses.is_empty() {
             eprintln!("  No responses received. Ending deliberation.");
@@ -265,6 +286,7 @@ fn invoke_participants(
     prompt: &str,
     forum_path: &Path,
     round: u32,
+    emit_events: bool,
 ) -> Result<HashMap<String, String>> {
     let round_dir = forum_path.join(format!("round-{}", round));
     let mut responses = HashMap::new();
@@ -333,11 +355,11 @@ fn invoke_participants(
             let timeout = participant_timeout;
 
             std::thread::spawn(move || {
-                let result = substrate::invoke_command(&cmd_template, &prompt, timeout);
-                if let Ok(ref response) = result {
-                    let _ =
-                        substrate::write_atomic(&round_dir.join(format!("{}.md", name)), response);
-                }
+                let result = substrate::invoke_command(&cmd_template, &prompt, timeout)
+                    .and_then(|response| {
+                        substrate::write_atomic(&round_dir.join(format!("{}.md", name)), &response)?;
+                        Ok(response)
+                    });
                 tx.send((name, result)).ok();
             });
         }
@@ -347,6 +369,7 @@ fn invoke_participants(
         for (name, result) in rx {
             match result {
                 Ok(response) => {
+                    emit_participant_response(config, forum_path, round, &name, &response, emit_events)?;
                     let words = response.split_whitespace().count();
                     eprintln!("  \u{2713} {} responded ({} words)", name, words);
                     responses.insert(name, response);
@@ -396,8 +419,12 @@ fn invoke_participants(
         }
         eprintln!();
 
-        let manual_responses =
-            substrate::watch_for_responses(&round_dir, &manual_participants, timeout)?;
+        let manual_responses = substrate::watch_for_responses(
+            &round_dir,
+            &manual_participants,
+            timeout,
+            |name, response| emit_participant_response(config, forum_path, round, name, response, emit_events),
+        )?;
 
         let missing: Vec<&String> = manual_participants
             .iter()
@@ -414,6 +441,26 @@ fn invoke_participants(
     }
 
     Ok(responses)
+}
+
+/// Emit only after the response is available on disk, from the protocol thread.
+fn emit_participant_response(
+    config: &ForumConfig,
+    forum_path: &Path,
+    round: u32,
+    name: &str,
+    response: &str,
+    enabled: bool,
+) -> Result<()> {
+    if enabled {
+        events::emit(
+            forum_path,
+            &config.forum.id,
+            EventType::ParticipantResponse,
+            json!({ "round": round, "participant": name, "word_count": response.split_whitespace().count() }),
+        )?;
+    }
+    Ok(())
 }
 
 fn generate_prompt(
@@ -822,6 +869,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn forum_emits_complete_lifecycle_only_when_enabled() {
+        for enabled in [false, true] {
+            let dir = std::env::temp_dir().join(format!("ting-test-lifecycle-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut config = make_test_config("A live topic");
+            config.forum.max_rounds = 1;
+            config.convergence.min_rounds = 1;
+            config.convergence.judge_command = Some("printf 'SCORE: 8\nSUMMARY: Agreement\nDISAGREEMENTS:\nALIGNMENT: alice=8 bob=8\n'".into());
+            config.synthesis.command = Some("printf 'A synthesis'".into());
+            for participant in config.participants.configs.values_mut() {
+                participant.participant_type = "command".into();
+                participant.command = Some("printf 'A response'".into());
+            }
+            run_forum(&config, &dir, &RunOptions { emit_events: enabled, ..RunOptions::default() }).unwrap();
+            if enabled {
+                let log = std::fs::read_to_string(events::event_log_path(&dir)).unwrap();
+                let events: Vec<events::DashboardEvent> = log.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+                let schema: serde_json::Value = serde_json::from_str(include_str!("../schemas/dashboard-event.schema.json")).unwrap();
+                let validator = jsonschema::validator_for(&schema).unwrap();
+                for (index, event) in events.iter().enumerate() {
+                    assert_eq!(event.seq, index as u64 + 1);
+                    assert!(validator.is_valid(&serde_json::to_value(event).unwrap()));
+                }
+                assert_eq!(events.iter().map(|event| event.event_type).collect::<Vec<_>>(), vec![
+                    EventType::ForumStarted, EventType::RoundStarted,
+                    EventType::ParticipantResponse, EventType::ParticipantResponse,
+                    EventType::Synthesis, EventType::Convergence, EventType::ForumComplete,
+                ]);
+                assert_eq!(events[0].payload["topic"], "A live topic");
+                assert_eq!(events[0].payload["participants"], json!(["alice", "bob"]));
+                assert_eq!(events[1].payload["stage"], "proposal");
+                assert_eq!(events[2].payload["word_count"], 2);
+            } else {
+                assert!(!events::event_log_path(&dir).exists());
+            }
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
     fn participant_aliases_receive_distinct_persisted_identities() {
         let dir = std::env::temp_dir().join(format!("ting-test-identities-{}", uuid::Uuid::new_v4()));
         let round_dir = substrate::create_round_dir(&dir, 2).unwrap();
@@ -846,7 +933,7 @@ mod tests {
             claims: None,
         }];
         let shared_prompt = generate_crossexam_prompt(&config, &prior).unwrap();
-        let responses = invoke_participants(&config, &shared_prompt, &dir, 2).unwrap();
+        let responses = invoke_participants(&config, &shared_prompt, &dir, 2, true).unwrap();
         for name in &config.participants.names {
             let saved = std::fs::read_to_string(round_dir.join("prompts").join(format!("{}.md", name))).unwrap();
             assert!(saved.starts_with(&format!("# Your participant identity\n\nYou are participant `{}`", name)));
@@ -858,6 +945,13 @@ mod tests {
         }
         assert_ne!(responses["optimist"], responses["skeptic"]);
         assert_eq!(responses["human"], "Human response");
+        let log = std::fs::read_to_string(events::event_log_path(&dir)).unwrap();
+        let events: Vec<events::DashboardEvent> = log.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(events.len(), 3);
+        for (index, event) in events.iter().enumerate() {
+            assert_eq!(event.seq, index as u64 + 1);
+            assert_eq!(event.event_type, EventType::ParticipantResponse);
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1014,7 +1108,7 @@ mod tests {
         )]);
         config.timing.participant_timeout = "5s".into();
 
-        let result = invoke_participants(&config, "test prompt", &dir, 0);
+        let result = invoke_participants(&config, "test prompt", &dir, 0, false);
         assert!(result.is_err(), "expected aggregation guard to abort");
         let err = result.unwrap_err().to_string();
         assert!(
