@@ -173,7 +173,8 @@ pub fn generate_html_report(config: &ForumConfig, forum_path: &Path) -> Result<S
                 .unwrap_or("unknown");
             format!(
                 "<span class=\"participant-chip\">{} <small>({})</small></span>",
-                n, model
+                escape_html_attr(n),
+                escape_html_attr(model)
             )
         })
         .collect::<Vec<_>>()

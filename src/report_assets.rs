@@ -81,6 +81,14 @@ mod tests {
         assert!(!html.contains("<script src="));
         assert!(html.contains("Third-party notices"));
         assert!(html.contains("The forum adds useful dissent."));
+        std::fs::write(
+            dir.join("scores.toml"),
+            "[baseline]\naverage = \"<svg/onload=alert(42)>\"\n[forum]\naverage = 7\n",
+        )
+        .unwrap();
+        let html = crate::eval::generate_eval_html(&dir).unwrap();
+        assert!(html.contains("&lt;svg/onload=alert(42)&gt;"));
+        assert!(!html.contains("<svg/onload=alert(42)>"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -102,6 +110,12 @@ mod tests {
         assert!(html.contains("&lt;/textarea&gt;&lt;script&gt;alert('unsafe')&lt;/script&gt;"));
         assert!(html.contains("https://github.com/Abeansits/ting"));
         assert!(!html.contains("https://github.com/Abeansits/agora"));
+        let mut meta = std::fs::read_to_string(dir.join("meta.toml")).unwrap();
+        meta.push_str("\n[models]\npragmatist = \"<svg/onload=alert(43)>\"\n");
+        std::fs::write(dir.join("meta.toml"), meta).unwrap();
+        let html = crate::report::generate_html_report(&cfg, &dir).unwrap();
+        assert!(html.contains("&lt;svg/onload=alert(43)&gt;"));
+        assert!(!html.contains("<svg/onload=alert(43)>"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
