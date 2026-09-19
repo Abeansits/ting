@@ -99,8 +99,10 @@ Goal: make Ting trustworthy, easy to try, and welcoming to open-source contribut
 
 ### FIX-08 · P2 · Fix Unicode topic truncation
 
-- [ ] Truncate display text at character boundaries.
-- [ ] Add emoji and non-Latin regression cases.
+- [x] Truncate display text at character boundaries.
+- [x] Add emoji and non-Latin regression cases.
+
+**Implementation:** topic lists and preset-command lists use the same UTF-8-safe abbreviation helper. Regression cases cover ASCII boundaries, emoji, non-Latin text, and mixed multibyte strings. Width is measured in Unicode scalar values, not terminal display columns.
 
 **Evidence:** `src/main.rs::cmd_list` slices topics with `&topic[..32]`.
 

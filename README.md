@@ -383,8 +383,9 @@ Keys: `q` / Ctrl-C / Esc quit, `r` reload snapshot, `?` help,
 
 ### Without `--dashboard`
 
-Behavior is bit-for-bit identical to v0.3: no event log, no classifier
-call, no server, no added disk state. Upgrade safely without opting in.
+No event log, classifier call, metric-scoring pass, or HTTP server is started.
+Participant prompts and run outcomes are still saved for inspection and reliable
+completion tracking.
 
 ## Directory Structure
 
