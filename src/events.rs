@@ -49,6 +49,16 @@ pub enum EventType {
     Convergence,
     ForumComplete,
     ForumFailed,
+    ForumInterrupted,
+}
+
+impl EventType {
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::ForumComplete | Self::ForumFailed | Self::ForumInterrupted
+        )
+    }
 }
 
 /// Envelope written as one line of `dashboard-events.jsonl`.
@@ -318,6 +328,7 @@ mod tests {
             EventType::Convergence => json!({ "round": 2, "score": 6.1 }),
             EventType::ForumComplete => json!({ "rounds_used": 2 }),
             EventType::ForumFailed => json!({ "error": "Finalization failed" }),
+            EventType::ForumInterrupted => json!({ "error": "Interrupted by user" }),
         }
     }
 
@@ -333,6 +344,7 @@ mod tests {
         EventType::Convergence,
         EventType::ForumComplete,
         EventType::ForumFailed,
+        EventType::ForumInterrupted,
     ];
 
     #[test]

@@ -53,6 +53,33 @@ the browser replays the latest attempt, and browser/TUI reducers clear old round
 and scores at that boundary. Refresh an already-ended browser stream or run
 `ting serve` again to observe a new attempt.
 
+## Stopping and cancellation
+
+Press Ctrl-C once to cancel `new`, `resume`, or `eval`. SIGTERM and SIGHUP request
+the same cleanup. Ting stops active model command process groups, leaves completed
+checkpoints intact, records an `interrupted` forum status, and exits with code 130.
+Browser and TUI consumers receive `forum_interrupted`; dashboard connections have
+up to five seconds to close. Use `ting resume` to continue the saved forum.
+
+A second signal forces immediate exit and can bypass cleanup. Cancellation cannot
+undo a remote provider request or a command's external side effects. Commands
+that deliberately detach from their process group are outside this cleanup.
+Evaluation baseline/comparison calls can be cancelled but are not resumable;
+only the evaluation's forum has checkpoints.
+
+Completed forums record `stop_reason` in `final/meta-summary.toml`:
+
+- `converged`: the configured judgment threshold was met.
+- `stalled`: two consecutive revision rounds (rounds 3 and 4 or later) have
+  byte-identical answers from every participant, yet still disagree. This rule
+  only stops before the round limit and does not truncate an already-started
+  later round during resume. Dissent is retained; stalled does not mean agreement.
+- `budget_exhausted`: the hard round limit was reached without convergence.
+
+Failed and interrupted attempts are recorded in `run-status.json`; they are not
+completed results. A hard kill is detected from the released runner lock on the
+next status read, even when it could not write an interruption event.
+
 ## Limits
 
 - A provider call can be repeated if the process dies after the provider responds
@@ -65,4 +92,3 @@ and scores at that boundary. Refresh an already-ended browser stream or run
   not permission to invent or silently trust a result.
 - Final results are available only after successful finalization. A failed attempt
   keeps its evidence, but `ting result` does not present it as complete.
-- Graceful whole-forum cancellation remains separate roadmap work.

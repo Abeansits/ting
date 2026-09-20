@@ -77,6 +77,7 @@ pub enum ForumStatus {
     InProgress,
     Completed,
     Failed,
+    Interrupted,
 }
 
 impl DashboardState {

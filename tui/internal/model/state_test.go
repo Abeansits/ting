@@ -138,3 +138,13 @@ func TestApply_ClassifierMetricsStoredRaw(t *testing.T) {
 		t.Errorf("ClassifierMetrics = %s, want %s", s.ClassifierMetrics, payload)
 	}
 }
+
+func TestApply_Interrupted(t *testing.T) {
+	s := NewState("")
+	if err := s.Apply(mustEvent(t, 1, EventTypeForumInterrupted, `{"error":"Stopped"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if s.Status != StatusInterrupted {
+		t.Fatalf("status = %q", s.Status)
+	}
+}

@@ -43,10 +43,10 @@ tagged commit `609b20874674733a94cdcc25500f1986593243f7` and published as a prer
 
 ### 0.6 · Recovery and control
 
-- [x] Add `ting resume` with checkpoints for completed operations (implemented, pending PR merge).
-- [x] Persist execution options needed for reproducible recovery (implemented, pending PR merge).
-- [x] Prevent stale scores from being reused after responses or rubrics change (implemented, pending PR merge).
-- [ ] Add cancellation and distinct stop reasons: converged, stalled, budget exhausted, failed, interrupted.
+- [x] Add `ting resume` with checkpoints for completed operations ([#36](https://github.com/Abeansits/ting/pull/36)).
+- [x] Persist execution options needed for reproducible recovery ([#36](https://github.com/Abeansits/ting/pull/36)).
+- [x] Prevent stale scores from being reused after responses or rubrics change ([#36](https://github.com/Abeansits/ting/pull/36)).
+- [x] Add cancellation and distinct stop reasons: converged, stalled, budget exhausted, failed, interrupted.
 - [x] Enforce hard round limits and accurate configuration semantics (FIX-09; #29 and #30).
 - [ ] Display actual discussion content and configured thresholds in the dashboard (OSS-08).
 

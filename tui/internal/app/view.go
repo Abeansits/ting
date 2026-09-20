@@ -365,6 +365,8 @@ func statusBadge(st model.Status) string {
 		return styleStatusDone.Render("completed")
 	case model.StatusFailed:
 		return styleError.Render("failed")
+	case model.StatusInterrupted:
+		return styleAccent.Render("interrupted")
 	case model.StatusInProgress:
 		return styleAccent.Render("in_progress")
 	default:

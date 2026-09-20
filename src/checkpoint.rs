@@ -125,6 +125,7 @@ pub fn text(
     editable: bool,
     generate: impl FnOnce() -> Result<String>,
 ) -> Result<String> {
+    crate::cancellation::check()?;
     let path = record_path(output)?;
     // Value uses sorted object keys, including nested maps.
     let input_hash = digest(&serde_json::to_vec(&(VERSION, input))?);

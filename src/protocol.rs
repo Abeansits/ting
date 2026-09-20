@@ -68,6 +68,7 @@ pub fn initialize_options(forum: &Path, opts: &RunOptions) -> Result<()> {
 /// Run a complete forum deliberation through the modified Delphi protocol.
 /// The configured maximum is a hard ceiling; disagreement never adds rounds.
 pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOptions) -> Result<()> {
+    crate::cancellation::check()?;
     config::validate_for_run(forum_config)?;
     anyhow::ensure!(
         !opts.score || opts.classify,
@@ -83,6 +84,7 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
     }
     run_status::write(forum_path, Status::Running, None)?;
     let result = run_forum_inner(forum_config, forum_path, opts).and_then(|rounds_used| {
+        crate::cancellation::check()?;
         run_status::write(forum_path, Status::Completed, None)?;
         Ok(rounds_used)
     });
@@ -102,9 +104,20 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
             Ok(())
         }
         Err(error) => {
+            let interrupted =
+                crate::cancellation::is_interrupted(&error) || crate::cancellation::requested();
+            let status = if interrupted {
+                Status::Interrupted
+            } else {
+                Status::Failed
+            };
+            let event_type = if interrupted {
+                EventType::ForumInterrupted
+            } else {
+                EventType::ForumFailed
+            };
             let message = format!("{error:#}");
-            if let Err(status_error) =
-                run_status::write(forum_path, Status::Failed, Some(message.clone()))
+            if let Err(status_error) = run_status::write(forum_path, status, Some(message.clone()))
             {
                 eprintln!("  Warning: could not record failed forum: {status_error:#}");
             }
@@ -112,13 +125,17 @@ pub fn run_forum(forum_config: &ForumConfig, forum_path: &Path, opts: &RunOption
                 && let Err(event_error) = events::emit(
                     forum_path,
                     &forum_config.forum.id,
-                    EventType::ForumFailed,
+                    event_type,
                     json!({ "error": message }),
                 )
             {
                 eprintln!("  Warning: could not announce failed forum: {event_error:#}");
             }
-            Err(error)
+            if interrupted && !crate::cancellation::is_interrupted(&error) {
+                Err(anyhow::Error::new(crate::cancellation::Interrupted).context(message))
+            } else {
+                Err(error)
+            }
         }
     }
 }
@@ -294,6 +311,9 @@ fn run_forum_inner(
                 &last.responses,
                 last.synthesis.as_deref(),
             ) {
+                if crate::cancellation::is_interrupted(&e) {
+                    return Err(e);
+                }
                 eprintln!(
                     "  Warning: metric scoring failed for round {}: {}. \
                      Continuing forum; dashboard will show classifier metrics \
@@ -327,6 +347,9 @@ fn run_forum_inner(
                     substrate::write_atomic_toml(&round_dir.join("alignment.toml"), &content)?;
                 }
                 Err(error) => {
+                    if crate::cancellation::is_interrupted(&error) {
+                        return Err(error);
+                    }
                     checkpoint::archive(&round_dir.join("alignment.toml"))?;
                     checkpoint::archive(&round_dir.join("alignment.json"))?;
                     eprintln!(
@@ -366,6 +389,20 @@ fn run_forum_inner(
                     }
 
                     last_convergence = Some(result);
+                    // Two revision rounds with byte-identical answers cannot add
+                    // new evidence. Do not discard already-started later rounds
+                    // when replaying a forum created before this stopping rule.
+                    if round_num >= 4
+                        && round_num < forum_config.forum.max_rounds
+                        && responses.len() == forum_config.participants.names.len()
+                        && responses == prior_rounds[prior_rounds.len() - 2].responses
+                        && !substrate::round_dir(forum_path, round_num + 1).exists()
+                    {
+                        eprintln!(
+                            "  Stalled: participant answers did not change between revision rounds."
+                        );
+                        break;
+                    }
                 }
             }
         }
@@ -399,6 +436,9 @@ fn run_forum_inner(
 
     match &final_result {
         ConvergenceResult::Converged { .. } => {}
+        _ if prior_rounds.len() < forum_config.forum.max_rounds as usize => {
+            eprintln!("\n=== Discussion stalled; disagreements remain ===");
+        }
         _ => eprintln!(
             "\n=== Max rounds ({}) reached ===",
             forum_config.forum.max_rounds
@@ -548,21 +588,25 @@ fn invoke_participants(
             let prompt = participant_prompts[&name].clone();
             let round_dir = round_dir.clone();
             let timeout = participant_timeout;
+            let token = crate::cancellation::current();
 
             std::thread::spawn(move || {
-                let result = checkpoint::text(
-                    &round_dir.join(format!("{}.md", name)),
-                    json!([cmd_template, prompt]),
-                    true,
-                    || {
-                        let response = substrate::invoke_command(&cmd_template, &prompt, timeout)?;
-                        anyhow::ensure!(
-                            !response.trim().is_empty(),
-                            "Participant returned an empty response"
-                        );
-                        Ok(response)
-                    },
-                );
+                let result = crate::cancellation::with_token(token, || {
+                    checkpoint::text(
+                        &round_dir.join(format!("{}.md", name)),
+                        json!([cmd_template, prompt]),
+                        true,
+                        || {
+                            let response =
+                                substrate::invoke_command(&cmd_template, &prompt, timeout)?;
+                            anyhow::ensure!(
+                                !response.trim().is_empty(),
+                                "Participant returned an empty response"
+                            );
+                            Ok(response)
+                        },
+                    )
+                });
                 let result = result.and_then(|response| {
                     anyhow::ensure!(
                         !response.trim().is_empty(),
@@ -597,6 +641,7 @@ fn invoke_participants(
                 }
             }
         }
+        crate::cancellation::check()?;
         // A requested participant that errors mid-round is not optional input —
         // silently dropping it would produce a synthesis that misleads the user
         // about whose voice was in the room. Abort so they can investigate and
@@ -944,6 +989,8 @@ fn write_final_output(
     };
     let stop_reason = if status == "converged" {
         "converged"
+    } else if rounds.len() < config.forum.max_rounds as usize {
+        "stalled"
     } else {
         "budget_exhausted"
     };
@@ -1286,6 +1333,8 @@ esac
     fn round_budget_is_a_hard_ceiling_and_early_convergence_still_stops() {
         for (budget, score, expected_rounds, reason) in [
             (2, 4, 2, "budget_exhausted"),
+            (6, 4, 4, "stalled"),
+            (4, 4, 4, "budget_exhausted"),
             (5, 8, 2, "converged"),
             (1, 8, 1, "converged"),
         ] {

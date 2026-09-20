@@ -15,8 +15,10 @@ fn evaluate_with_retry<T>(
     label: &str,
 ) -> Result<T> {
     for attempt in 1..=2 {
+        crate::cancellation::check()?;
         match invoke().and_then(|output| parse(&output)) {
             Ok(value) => return Ok(value),
+            Err(error) if crate::cancellation::is_interrupted(&error) => return Err(error),
             Err(error) if attempt == 1 => {
                 eprintln!("  Warning: {label} attempt failed: {error:#}. Retrying once.")
             }
@@ -205,6 +207,21 @@ fn parse_judge_response(output: &str, threshold: u32) -> Result<ConvergenceResul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interruption_is_not_retried() {
+        let mut calls = 0;
+        let result = evaluate_with_retry(
+            || {
+                calls += 1;
+                Err(crate::cancellation::Interrupted.into())
+            },
+            |_| Ok(()),
+            "test",
+        );
+        assert!(crate::cancellation::is_interrupted(&result.unwrap_err()));
+        assert_eq!(calls, 1);
+    }
 
     #[test]
     fn test_parse_judge_converged() {

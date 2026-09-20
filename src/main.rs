@@ -1,3 +1,4 @@
+mod cancellation;
 mod checkpoint;
 mod classifier;
 mod config;
@@ -243,7 +244,26 @@ enum PresetAction {
 }
 
 fn main() -> Result<()> {
+    let result = run_cli();
+    if let Err(error) = &result
+        && cancellation::is_interrupted(error)
+    {
+        eprintln!("{error:#}");
+        std::process::exit(130);
+    }
+    result
+}
+
+fn run_cli() -> Result<()> {
     let cli = Cli::parse();
+    let _cancellation = if matches!(
+        &cli.command,
+        Commands::New { .. } | Commands::Resume { .. } | Commands::Eval { .. }
+    ) {
+        Some(cancellation::install_for_cli()?)
+    } else {
+        None
+    };
 
     match cli.command {
         Commands::Resume {
@@ -527,21 +547,40 @@ fn run_with_dashboard(
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
+        let token = cancellation::current();
         let forum_task = tokio::task::spawn_blocking(move || {
-            let result = protocol::run_forum(&forum_config, &forum_path, &run_opts);
+            let result = cancellation::with_token(token, || {
+                protocol::run_forum(&forum_config, &forum_path, &run_opts)
+            });
             let _ = shutdown_tx.send(());
             result
         });
 
-        let serve_result = server::serve(listener, server_path, async move {
+        let mut server_task = tokio::spawn(server::serve(listener, server_path, async move {
             let _ = shutdown_rx.await;
-        })
-        .await;
+        }));
 
         let forum_result = forum_task
             .await
             .map_err(|e| anyhow::anyhow!("forum task panicked: {e}"))
             .and_then(|r| r);
+
+        let serve_result = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            &mut server_task,
+        )
+        .await
+        {
+            Ok(result) => result
+                .map_err(|error| anyhow::anyhow!("dashboard task failed: {error}"))
+                .and_then(|result| result),
+            Err(_) => {
+                server_task.abort();
+                Err(anyhow::anyhow!(
+                    "Dashboard connections did not close within 5 seconds; forum work has stopped"
+                ))
+            }
+        };
 
         // Forum is the primary work — its error wins. A server error is only
         // returned on its own; if both fail, log the server failure and
