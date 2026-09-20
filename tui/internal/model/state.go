@@ -11,10 +11,11 @@ const StateVersion uint32 = 1
 type Status string
 
 const (
-	StatusPending    Status = "pending"
-	StatusInProgress Status = "in_progress"
-	StatusCompleted  Status = "completed"
-	StatusFailed     Status = "failed"
+	StatusPending     Status = "pending"
+	StatusInProgress  Status = "in_progress"
+	StatusCompleted   Status = "completed"
+	StatusFailed      Status = "failed"
+	StatusInterrupted Status = "interrupted"
 )
 
 // RoundSummary mirrors the snapshot's per-round shape. Loosely-typed payload
@@ -135,6 +136,8 @@ func (s *State) Apply(e Event) error {
 		s.Status = StatusCompleted
 	case EventTypeForumFailed:
 		s.Status = StatusFailed
+	case EventTypeForumInterrupted:
+		s.Status = StatusInterrupted
 	case EventTypeClaims, EventTypeAlignment:
 		// Not carried in the snapshot shape.
 	}

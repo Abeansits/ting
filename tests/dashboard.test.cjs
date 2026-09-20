@@ -62,3 +62,11 @@ test("a resumed attempt clears obsolete rounds and scores", () => {
   assert.equal(reducer.state.convergenceHistory.length, 0);
   assert.equal(reducer.state.status, "in_progress");
 });
+
+test("interruption remains distinct and resume starts a fresh attempt", () => {
+  const reducer = loadReducer();
+  reducer.applyEvent({seq: 1, type: "forum_interrupted", payload: {error: "Stopped"}});
+  assert.equal(reducer.state.status, "interrupted");
+  reducer.applyEvent({seq: 2, type: "forum_started", payload: {participants: [], max_rounds: 2}});
+  assert.equal(reducer.state.status, "in_progress");
+});

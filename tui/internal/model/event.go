@@ -26,6 +26,7 @@ const (
 	EventTypeConvergence         EventType = "convergence"
 	EventTypeForumComplete       EventType = "forum_complete"
 	EventTypeForumFailed         EventType = "forum_failed"
+	EventTypeForumInterrupted    EventType = "forum_interrupted"
 )
 
 // Event is one line of dashboard-events.jsonl. Payload stays as RawMessage
@@ -75,7 +76,7 @@ func IsKnownEventType(t EventType) bool {
 	case EventTypeForumStarted, EventTypeRoundStarted, EventTypeParticipantResponse,
 		EventTypeSynthesis, EventTypeClaims, EventTypeAlignment,
 		EventTypeClassifierMetrics, EventTypeMetricScores, EventTypeConvergence,
-		EventTypeForumComplete, EventTypeForumFailed:
+		EventTypeForumComplete, EventTypeForumFailed, EventTypeForumInterrupted:
 		return true
 	}
 	return false

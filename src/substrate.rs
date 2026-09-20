@@ -146,6 +146,7 @@ where
     print_countdown(is_tty, timeout.saturating_sub(start.elapsed()));
 
     loop {
+        crate::cancellation::check()?;
         let elapsed = start.elapsed();
         if elapsed >= timeout {
             if is_tty {
@@ -154,7 +155,11 @@ where
             break;
         }
         let remaining = timeout - elapsed;
-        let poll = Duration::from_secs(15);
+        let poll = if crate::cancellation::current().is_some() {
+            Duration::from_millis(100)
+        } else {
+            Duration::from_secs(15)
+        };
         let wait_time = remaining.min(poll);
 
         match rx.recv_timeout(wait_time) {
@@ -322,6 +327,7 @@ fn invoke_process(
     timeout: Duration,
     description: &str,
 ) -> Result<String> {
+    crate::cancellation::check()?;
     use std::io::{self, Write};
     use std::process::Stdio;
 
@@ -367,7 +373,23 @@ fn invoke_process(
         tx.send(output).ok();
     });
 
-    let result = rx.recv_timeout(timeout.saturating_sub(started.elapsed()));
+    let mut interrupted = false;
+    let result = loop {
+        if crate::cancellation::requested() {
+            interrupted = true;
+            break Err(mpsc::RecvTimeoutError::Timeout);
+        }
+        let remaining = timeout.saturating_sub(started.elapsed());
+        let poll = if crate::cancellation::current().is_some() {
+            remaining.min(Duration::from_millis(50))
+        } else {
+            remaining
+        };
+        match rx.recv_timeout(poll) {
+            Err(mpsc::RecvTimeoutError::Timeout) if started.elapsed() < timeout => continue,
+            result => break result,
+        }
+    };
     if matches!(result, Err(mpsc::RecvTimeoutError::Timeout)) {
         #[cfg(unix)]
         unsafe {
@@ -382,6 +404,9 @@ fn invoke_process(
     }
     // Reap the child and join pipe writers before returning or deleting input.
     let _ = worker.join();
+    if interrupted {
+        return Err(crate::cancellation::Interrupted.into());
+    }
     let output = match result {
         Ok(output) => output.with_context(|| format!("Failed to execute: {}", description))?,
         Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -452,6 +477,40 @@ fn invoke_claude(model: &str, prompt: &str, timeout: Duration) -> Result<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancellation_interrupts_commands_and_manual_waits() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        for manual in [false, true] {
+            let dir = std::env::temp_dir().join(format!("ting-cancel-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(&dir).unwrap();
+            let token = Arc::new(AtomicBool::new(false));
+            let request = token.clone();
+            let trigger = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(150));
+                request.store(true, Ordering::SeqCst);
+            });
+            let start = Instant::now();
+            let result = crate::cancellation::with_token(Some(token), || {
+                if manual {
+                    watch_for_responses(&dir, &["alice".into()], Duration::from_secs(30), |_, _| {
+                        Ok(())
+                    })
+                    .map(|_| ())
+                } else {
+                    invoke_command("sleep 30 & wait", "prompt", Duration::from_secs(30)).map(|_| ())
+                }
+            });
+            trigger.join().unwrap();
+            assert!(crate::cancellation::is_interrupted(&result.unwrap_err()));
+            assert!(start.elapsed() < Duration::from_secs(5));
+            assert!(crate::cancellation::current().is_none());
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
 
     #[test]
     fn manual_response_notifies_before_all_participants_finish() {

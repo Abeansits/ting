@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Graceful Ctrl-C/SIGTERM/SIGHUP cancellation with command-group cleanup,
+  interrupted status/events, and checkpoint recovery.
+- A distinct `stalled` stop reason when consecutive revision rounds repeat all
+  participant answers without convergence; unresolved dissent remains in output.
+
 - `ting resume` with durable operation checkpoints, recorded execution options,
   input/output fingerprints, and a single-runner lock. Completed calls are reused;
   missing outputs are restored and changed evidence invalidates dependent work.

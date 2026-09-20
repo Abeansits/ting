@@ -125,11 +125,11 @@ async fn serve_events(
 
         // A new attempt can be preparing its first event while the log still
         // ends with the previous attempt's terminal event.
-        let preparing_attempt = backlog.last().is_some_and(|event| matches!(event.event_type, EventType::ForumComplete | EventType::ForumFailed))
+        let preparing_attempt = backlog.last().is_some_and(|event| event.event_type.is_terminal())
             && crate::run_status::read(&forum_dir).ok().flatten().is_some_and(|record| record.status == crate::run_status::Status::Running);
         let mut completed = false;
         for ev in backlog.into_iter().filter(|_| !preparing_attempt) {
-            if matches!(ev.event_type, EventType::ForumComplete | EventType::ForumFailed) {
+            if ev.event_type.is_terminal() {
                 completed = true;
             }
             yield Ok(event_to_sse(&ev));
@@ -155,7 +155,7 @@ async fn serve_events(
                             continue; // already delivered via backlog
                         }
                         max_seq = ev.seq;
-                        let done = matches!(ev.event_type, EventType::ForumComplete | EventType::ForumFailed);
+                        let done = ev.event_type.is_terminal();
                         yield Ok(event_to_sse(&ev));
                         if done {
                             return;
@@ -812,22 +812,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn api_events_replays_completed_forum_and_ends() {
-        let dir = tmp_dir("api-events-completed");
-        append_event(&dir, &make_event(1, EventType::ForumStarted)).unwrap();
-        append_event(&dir, &make_event(2, EventType::ForumComplete)).unwrap();
-
-        let app = router(dir);
-        let resp = app
-            .oneshot(Request::get("/api/events").body(Body::empty()).unwrap())
+    async fn api_events_replays_terminal_forums_and_ends() {
+        for terminal in [
+            EventType::ForumComplete,
+            EventType::ForumFailed,
+            EventType::ForumInterrupted,
+        ] {
+            let dir = tmp_dir("api-events-terminal");
+            append_event(&dir, &make_event(1, EventType::ForumStarted)).unwrap();
+            append_event(&dir, &make_event(2, terminal)).unwrap();
+            let resp = router(dir)
+                .oneshot(Request::get("/api/events").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let bytes = tokio::time::timeout(
+                Duration::from_secs(2),
+                axum::body::to_bytes(resp.into_body(), 100_000),
+            )
             .await
+            .expect("terminal SSE stream must close")
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-
-        // Stream should end quickly after the final event.
-        let text = collect_sse(resp.into_body(), 10_000, Duration::from_secs(2)).await;
-        let seqs = sse_update_seqs(&text);
-        assert_eq!(seqs, vec![1, 2], "body:\n{text}");
+            let text = String::from_utf8(bytes.to_vec()).unwrap();
+            assert_eq!(sse_update_seqs(&text), vec![1, 2]);
+        }
     }
 
     #[tokio::test]

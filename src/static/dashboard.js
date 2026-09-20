@@ -140,6 +140,9 @@
       case "forum_failed":
         state.status = "failed";
         break;
+      case "forum_interrupted":
+        state.status = "interrupted";
+        break;
       default:
         // claims / alignment are reflected via participant_response + synthesis.
         // Any unknown type is ignored so older clients don't break.
@@ -458,7 +461,7 @@
         applyEvent(event);
         render();
         setConnection("live");
-        if (event.type === "forum_complete" || event.type === "forum_failed") {
+        if (["forum_complete", "forum_failed", "forum_interrupted"].includes(event.type)) {
           es.close();
           setConnection("ended");
         }
