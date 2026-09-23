@@ -38,21 +38,25 @@ or edit the [sample source](examples/demo-forum.json).
 
 ## Run your own discussion
 
-For a live run, install and authenticate **Claude Code** for synthesis and judging,
-plus whichever participant CLIs you want to use. Built-in presets include
-`claude`, `codex`, `gemini`, `opencode`, `ollama`, and `human`.
+For a first live run, [install Claude Code and sign in](https://code.claude.com/docs/en/setup).
+Ting uses it for synthesis and judging. This example also uses it for two
+separately prompted participants, so you only need one model CLI:
 
 ```sh
-ting doctor --participant codex --participant gemini
+ting doctor --participant claude
 
 ting new "Should our small team add a message queue?" \
-  --participant codex --participant gemini --dashboard
+  --participant claude \
+  --participant 'critic:command:cat {prompt_file} | claude -p -'
 ```
 
-`doctor` checks executables; authentication and custom commands still need your
-inspection. Live runs use your provider accounts and can take several minutes.
-Review the [execution, privacy, and cost guide](docs/EXECUTION.md) first: participant
-commands inherit your environment and permissions.
+The two participants each call Claude once per round; synthesis and judging
+make additional calls. They are not independent model providers. For different
+models, replace `critic` with a `codex` or `gemini` participant after setting
+up that CLI. Use `ting preset list` to inspect the built-in commands.
+`doctor` checks executables, not authentication. A live run makes several paid
+model calls and can take minutes. Review [execution, privacy, and cost](docs/EXECUTION.md)
+before starting; participant commands inherit your environment and permissions.
 
 After the run, use the forum ID printed by Ting:
 

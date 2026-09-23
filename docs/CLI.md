@@ -9,7 +9,7 @@ installed version. See [execution and cost](EXECUTION.md) before live model call
 ting demo                            # sample result + browser dashboard
 ting demo --no-open --port 4000
 ting demo --output ./sample --no-serve
-ting doctor --participant codex --participant gemini
+ting doctor --participant claude
 ting doctor --json
 ```
 
@@ -21,13 +21,15 @@ are not tested automatically; missing inspected binaries produce exit code 1.
 
 ```sh
 ting new "Should we adopt this architecture?" \
-  --participant codex --participant gemini --participant human \
-  --context notes.md --timeout 5m --max-rounds 2 --dashboard
+  --participant claude \
+  --participant 'critic:command:cat {prompt_file} | claude -p -'
 ```
 
-The command blocks until the forum finishes or fails. Repeated `--participant`
-flags select participants; names must be unique. Context is snapshotted once.
-An existing context path is read as a file; other values become literal context.
+This first-run example needs only an authenticated Claude Code CLI. The two
+participant names make separate calls to the same provider. The command blocks
+until the forum finishes or fails. Repeated `--participant` flags select
+participants; names must be unique. Use `--context notes.md` to attach a file;
+an existing path is read, while other values become literal context.
 
 | Flag | Behavior |
 | --- | --- |
@@ -40,8 +42,10 @@ An existing context path is read as a file; other values become literal context.
 | `--port 4000` | Dashboard port; default `3420` |
 | `--no-open` | Do not open the browser automatically |
 
-Resume is tracked in the [roadmap](../ROADMAP.md). A round ceiling limits iterations,
-not provider tokens or dollars: each round can still make several model calls.
+In 0.6 development builds, a checkpointed forum can continue with
+`ting resume <forum-id>` after an interruption. See [recovery](RECOVERY.md) for
+what gets reused. A round ceiling limits iterations, not provider tokens or
+dollars: each round can still make several model calls.
 
 ## Presets and custom participants
 
