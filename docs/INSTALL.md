@@ -13,25 +13,36 @@ limits. Choose the archive matching your operating system and CPU:
 | macOS Intel | `x86_64-apple-darwin` |
 | macOS Apple Silicon | `aarch64-apple-darwin` |
 
-Download the archive and matching `.sha256` file from the
-[preview release](https://github.com/Abeansits/ting/releases/tag/v0.5.0-rc.2). From their
-download directory, verify the checksum:
+These are complete examples for the most common systems. Each downloads the
+archive and matching checksum from the [preview release](https://github.com/Abeansits/ting/releases/tag/v0.5.0-rc.2),
+verifies it, and starts the no-account demo. Run one block in a new directory.
+
+macOS Apple Silicon:
 
 ```sh
-# Linux
-sha256sum -c ting-0.5.0-rc.2-<target>.tar.gz.sha256
-# macOS
-shasum -a 256 -c ting-0.5.0-rc.2-<target>.tar.gz.sha256
+mkdir ting-preview && cd ting-preview
+curl -fLO https://github.com/Abeansits/ting/releases/download/v0.5.0-rc.2/ting-0.5.0-rc.2-aarch64-apple-darwin.tar.gz
+curl -fLO https://github.com/Abeansits/ting/releases/download/v0.5.0-rc.2/ting-0.5.0-rc.2-aarch64-apple-darwin.tar.gz.sha256
+shasum -a 256 -c ting-0.5.0-rc.2-aarch64-apple-darwin.tar.gz.sha256
+tar -xzf ting-0.5.0-rc.2-aarch64-apple-darwin.tar.gz
+./ting-0.5.0-rc.2-aarch64-apple-darwin/bin/ting demo
 ```
 
-Then extract and run:
+Linux x86-64:
 
 ```sh
-tar -xzf ting-0.5.0-rc.2-<target>.tar.gz
-cd ting-0.5.0-rc.2-<target>
-./bin/ting --version
-./bin/ting demo
+mkdir ting-preview && cd ting-preview
+curl -fLO https://github.com/Abeansits/ting/releases/download/v0.5.0-rc.2/ting-0.5.0-rc.2-x86_64-unknown-linux-gnu.tar.gz
+curl -fLO https://github.com/Abeansits/ting/releases/download/v0.5.0-rc.2/ting-0.5.0-rc.2-x86_64-unknown-linux-gnu.tar.gz.sha256
+sha256sum -c ting-0.5.0-rc.2-x86_64-unknown-linux-gnu.tar.gz.sha256
+tar -xzf ting-0.5.0-rc.2-x86_64-unknown-linux-gnu.tar.gz
+./ting-0.5.0-rc.2-x86_64-unknown-linux-gnu/bin/ting demo
 ```
+
+For macOS Intel or Linux ARM64, download the matching archive and `.sha256` file
+from the release page using the target in the table above. Run `shasum -a 256 -c`
+on macOS or `sha256sum -c` on Linux, extract the archive, then run `bin/ting demo`
+inside the extracted directory.
 
 The archive includes the optional `bin/ting-tui`, docs, examples, upstream notices,
 and build provenance. Copy `bin/ting` to a directory already on your PATH if you
@@ -62,11 +73,12 @@ source, check out `v0.5.0-rc.2` before running the install command.
 
 ## Live-run prerequisites
 
-The demo needs no model accounts. For live discussions, install/authenticate Claude
-Code plus the participant CLIs you want to use, then run:
+The demo needs no model accounts. For the one-provider live example in the
+[README](../README.md#run-your-own-discussion), [install and authenticate Claude Code](https://code.claude.com/docs/en/setup),
+then run:
 
 ```sh
-ting doctor --participant codex --participant gemini
+ting doctor --participant claude
 ```
 
 Doctor checks binary files, not authentication. See [execution and cost](EXECUTION.md)

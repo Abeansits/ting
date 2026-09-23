@@ -2,7 +2,7 @@
 
 ## Before a live run
 
-Run `ting doctor --participant codex --participant gemini` to check executable
+Run `ting doctor --participant claude` to check executable
 availability. It does not run presets, authenticate accounts, contact providers,
 or spend model credits. Custom shell commands are reported for manual inspection.
 `--json` produces a machine-readable report; exit code 1 means an inspected
